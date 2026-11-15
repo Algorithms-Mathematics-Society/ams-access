@@ -184,6 +184,7 @@ export default function HomePage() {
     };
   }, []);
   const [signingOut, setSigningOut] = useState(false);
+  const signOutInFlightRef = useRef(false);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
   const [contestSearch, setContestSearch] = useState("");
   const [homeHelpOpen, setHomeHelpOpen] = useState(false);
@@ -1059,6 +1060,9 @@ export default function HomePage() {
   }
 
   async function signOut() {
+    // Own cleanup immediately, before React can disable the invoking control.
+    if (signOutInFlightRef.current) return;
+    signOutInFlightRef.current = true;
     setConfirmDiscardOpen(false);
     setSigningOut(true);
     recoveryEpochRef.current += 1;
@@ -1074,6 +1078,7 @@ export default function HomePage() {
         );
       }
     } catch {
+      signOutInFlightRef.current = false;
       setSigningOut(false);
       setActiveNav("overview");
       setResumeStatus(
@@ -1184,7 +1189,7 @@ export default function HomePage() {
             {activeNav === "overview" ? (
               <AstryxButton
                 label="Get help"
-                variant="ghost"
+                variant="secondary"
                 onClick={() => setHomeHelpOpen(true)}
               />
             ) : activeNav === "settings" ? (
@@ -1261,7 +1266,7 @@ export default function HomePage() {
           <HStack gap={3} justify="end" wrap="wrap">
             <AstryxButton
               label="Stay signed in"
-              variant="ghost"
+              variant="secondary"
               onClick={() => setConfirmDiscardOpen(false)}
             />
             <AstryxButton label="Discard and sign out" variant="destructive" onClick={signOut} />

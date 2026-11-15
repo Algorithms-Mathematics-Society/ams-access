@@ -132,7 +132,7 @@ export function SlipForm({
               label={passwordVisible ? "Hide" : "Show"}
               aria-label={passwordVisible ? "Hide password" : "Show password"}
               aria-controls="login-password"
-              variant="ghost"
+              variant="secondary"
               size="sm"
               onClick={() => setPasswordVisible((visible) => !visible)}
               style={{ flexShrink: 0, marginInlineEnd: "var(--spacing-2)" }}

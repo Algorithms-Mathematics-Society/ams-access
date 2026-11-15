@@ -27,6 +27,8 @@ export type BufferedAnswer = {
   language: string;
   files: BufferedFile[];
   activeFileId: string;
+  /** Exact C++ entrypoint saved with the whole source set. */
+  entrypoint?: string;
   savedAtMs: number;
   /** The draft revision this buffer was written *against*. Compared with the
    * server's to decide which is newer — see `chooseRestore`. */
@@ -36,6 +38,9 @@ export type BufferedAnswer = {
 /** What the server holds for this problem, as far as we know. */
 export type ServerDraft = {
   source: string;
+  source_files?: { path: string; content: string }[] | null;
+  entrypoint?: string | null;
+  compilation_units?: string[] | null;
   language: string;
   client_revision: number;
 };
@@ -108,6 +113,7 @@ export function read(
       activeFileId: parsed.files.some((file) => file.id === parsed.activeFileId)
         ? parsed.activeFileId!
         : parsed.files[0].id,
+      ...(typeof parsed.entrypoint === "string" ? { entrypoint: parsed.entrypoint } : {}),
       savedAtMs:
         typeof parsed.savedAtMs === "number" && Number.isFinite(parsed.savedAtMs)
           ? parsed.savedAtMs
@@ -167,8 +173,10 @@ export function chooseRestore(
   // must not announce a restore. Differing content at the same revision means
   // the write was in flight when the app died, so the buffer is the later of
   // the two.
-  return activeContent(buffered) === serverDraft.source &&
-    buffered.language === serverDraft.language
-    ? "same"
-    : "buffer";
+  const sameSource = serverDraft.source_files?.length
+    ? JSON.stringify(buffered.files.map((file) => [file.name, file.content])) ===
+        JSON.stringify(serverDraft.source_files.map((file) => [file.path, file.content])) &&
+      buffered.entrypoint === serverDraft.entrypoint
+    : activeContent(buffered) === serverDraft.source;
+  return sameSource && buffered.language === serverDraft.language ? "same" : "buffer";
 }

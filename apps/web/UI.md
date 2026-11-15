@@ -349,8 +349,10 @@ Settings shows the installed AMS Access version above its section tabs, using na
 app metadata rather than the latest server release. Browser previews or unavailable
 native metadata show “Version unavailable.”
 
-Submission retries keep their key only for the exact session, problem, language,
-and source snapshot. Finish waits for an outstanding solution request to settle,
+An unconfirmed submission freezes its full request and idempotency key for that
+session and problem. An explicit retry resends those bytes even if the candidate
+has edited since; later edits remain in the workspace for a new attempt after
+acknowledgement. Finish waits for an outstanding solution request to settle,
 not for judging. Unconfirmed finishes release device controls while retaining
 session recovery and offering Retry finish. Home keeps recovery data through
 transient verification failures and offers Retry verification.
@@ -360,6 +362,15 @@ per client, and output polling never changes the participant's selected tab.
 Accepted submission receipts remain visible while history refresh recovers.
 Reset code asks for confirmation, restores the current language's starter, and
 saves through the existing draft path without changing other questions or attempts.
+
+The multi-file editor is capability gated by the problem projection and remains
+off until the API and judge rollout is complete. When enabled, source and header
+tabs belong to one workspace with a named C++ entrypoint. Run, scored Submit,
+device drafts and server backups carry the entire editable file set plus its
+compilation units. New paths are bounded and validated before an attempt; all
+source files are compiled, while published reference documents open read-only
+and never enter drafts or attempts. A missing capability flag preserves the
+single-source workflow. This adds no polling or teammate fetches.
 
 The app does not scan, join or manage Wi-Fi networks and does not ask for Location
 permission. After 12 seconds of a continuous observed connection failure, the
@@ -521,9 +532,10 @@ without IDs and interrupted signaling show remote status unavailable rather than
 misidentifying duplicate names. This adds no requests or polling. Deploy the API
 member-ID addition first; real two/five-member native acceptance remains required.
 
-Team voice attempts to join once when the authorized voice window first opens,
-starting muted. Failed joins, intentional leaves, and replaced sessions require
-an explicit action; polling never repeatedly requests microphone access. The
+Team voice starts only after the participant chooses Join voice and confirms,
+starting muted. Canceling or dismissing the confirmation never captures audio.
+Failed joins, intentional leaves, and replaced sessions require an explicit action;
+only a previously joined call can resume after a transient polling failure. The
 mic control reads Muted/Live. A local-only analysis clone provides input level
 and a muted-speech hint at four samples per second; it is never attached to a
 peer connection or audio output and is stopped with the voice session. If the
@@ -542,7 +554,7 @@ This uses the existing board projection and adds no requests or polling.
 Unsupported native platforms show the team-round restriction on Home and in device readiness. Selecting a contest makes one abortable, eight-second team probe before setup state or navigation; only an authoritative solo result proceeds. Other results remain on Home with explicit retry advice. There is no per-card polling, automatic retry, or extra request on supported platforms/browser.
 
 Team submission approval uses the shared lobby controller and the exact displayed
-revision. The Team dialog shows the aggregate approval count and only the
+revision. The Team progress dialog shows the revision, aggregate approval count and only the
 candidate's own vote state; the API does not publish individual teammate votes.
 Changing revision invalidates previous approvals visibly. Conflicts refresh once
 without replaying a vote; pending, expired, unavailable and submitted revisions
@@ -552,19 +564,26 @@ full benchmark/flamegraph results remain a separate feature. No new polling is
 introduced; staging must still verify the existing lobby rate and five-member
 consensus under concurrency.
 
-Team workspaces load only the locked board's published part labels, with the
-candidate's part first. Teammate statements/samples and starter code are visible
-read-only; Run remains available, while scored Submit and editor mutation are
-blocked. The click-time scoring guard uses the shared server clock and deadline;
+Team workspaces load only the candidate's assigned published part. Teammate
+statements, samples, starter code, drafts, Run and Submit routes are inaccessible.
+The assigned part supports the capability-gated multi-file editor and read-only
+reference attachments. The click-time scoring guard uses the shared server clock and deadline;
 the API remains authoritative if allocation changes. A previous submitted team
 revision does not block a new part submission before the deadline. The own-part
 Submit warning explains that a new revision resets votes. Team progress and voting
-open from the compact TopBar Team control, reusing the existing board without new
-polling. Loading a team workspace fetches at most the board's five part projections
+open from the compact TopBar Team progress control, reusing the existing board without new
+polling. Loading a team workspace fetches only the assigned part projection
 and existing statement assets once per authorized workspace load; staging must
 measure this entry burst for 3,000 participants. Native layout remains unverified.
 
-Team results are reached from the existing Team dialog and lazy-load per section.
+Team progress uses one navigation row: Progress, Integration, Live board and Benchmarks.
+The toolbar label stays Team progress; revision numbers belong inside the panel.
+Individual submission history remains under Attempts below the editor: each
+attempt expands to its available per-test verdict, time and memory details.
+Integration shows the current run and a distinct last finished result; the API
+does not expose a complete archive of team integrations. Benchmark history lists
+the returned measurements, with per-run profiles when available.
+Team results lazy-load per section.
 Integration detail reuses the lobby projection, separates individual verdicts from
 the integration suite, and never presents substituted/reference parts as a team
 pass. Missing or malformed details fail closed rather than displaying a raw AC.
@@ -576,13 +595,27 @@ staging verification of visible-board polling and result artifact costs remain.
 
 ## Team lobby layout and Linux runtime verification
 
-The lobby fills the available window width. Phase guidance and voice controls stay
-above part selection in the flexible main column; a 320px right column places the
-camera at the top and Members directly below it. The shared page scroll region
-reaches the right window edge, without a centered maximum width or separate member
-scrollbar. The locked assignment action appears before the parts list. Member
-audio settings are disclosed after joining; the assignment roster remains visible
-without a second idle voice roster. Help and Exit remain usable when editor
+The lobby fills the available window width. Compact phase guidance and voice controls stay
+above part selection in the flexible main column; a 280px right column places the
+camera at the top and Members directly below it. The member roster also shows voice
+presence, without a second member list or a member-list toggle. Voice updates render
+from the existing voice owner without rerendering the whole contest shell or adding
+polls. Ready, claim and release retain a reserved feedback row and stable action widths
+so ordinary pending updates do not move the parts list. Long part descriptions can
+be expanded when needed. The locked assignment action appears before the parts list.
+Allocation locking, timer expiry and unanimous team readiness never navigate the
+participant automatically. Once the server has locked their assignment and the
+contest start/security gates permit entry, the participant clicks Ready to open
+their part. Choosing-phase Ready still records team readiness; it does not grant
+workspace entry. Audio stays owned by the same session across this handoff, with
+the microphone and Voice controls in the workspace toolbar. Reconnection and audio
+errors use concise button states with details inside Voice settings or tooltips.
+The compact toolbar keeps controls on one row at desktop widths, with a wrapping
+fallback for small windows. Buttons have subtly contrasting filled surfaces without visible borders, with hover, pressed and focus states.
+Battery charging is conveyed by its icon and accessible description, without a
+duplicate visible label. Approval state is conveyed by Approve/Withdraw; revision
+zero leaves approval disabled with a reason on demand, not an extra empty-state sentence.
+Help and Exit remain usable when editor
 actions are locked, while mandatory overlays still suspend interaction.
 
 Narrow windows stack main content, camera, then Members. The camera occupies a

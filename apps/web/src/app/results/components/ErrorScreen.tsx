@@ -1,4 +1,5 @@
 import { type useRouter } from "next/navigation";
+import { Button } from "@astryxdesign/core/Button";
 import { exitToHome } from "@/lib/exit-to-home";
 
 export interface ErrorScreenProps {
@@ -42,12 +43,8 @@ export function ErrorScreen({ error, fetchResults, router }: ErrorScreenProps) {
         </svg>
         <span style={{ fontSize: 15, color: "var(--theme-error-text)" }}>{error}</span>
       </div>
-      <button onClick={() => void fetchResults()} className="results-btn results-btn-primary">
-        Retry
-      </button>
-      <button onClick={() => void exitToHome(router)} className="results-btn results-btn-ghost">
-        Back to Home
-      </button>
+      <Button label="Retry" variant="primary" onClick={() => void fetchResults()} />
+      <Button label="Back to Home" variant="secondary" onClick={() => void exitToHome(router)} />
     </div>
   );
 }

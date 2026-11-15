@@ -1,103 +1,94 @@
-# Linux native team voice runtime: implementation boundary
+# Linux native team voice
 
-WebKitGTK 2.54.2 on the inspected Linux host exposes no `RTCPeerConnection`, even
-after its `enable-webrtc` setting is enabled. The installed GStreamer WebRTC,
-ICE, DTLS, SRTP, and Opus plugins do not add that JavaScript API. Team voice
-therefore remains unavailable in this build. This document records the
-implementable Linux path; it does not enable the UI or certify a call.
-Upstream [WebKitGTK 2.54 release notes](https://webkitgtk.org/2026/09/16/webkitgtk-2.54-highlights.html#multimedia-improvements)
-describe WebRTC being disabled during its backend transition.
+Linux team voice uses the bundled `ams-linux-voice-worker` process instead of
+WebKit's `RTCPeerConnection`. WebKitGTK 2.54 disables that browser feature during
+its backend transition. Windows continues to use WebView2's browser WebRTC path.
+The two paths share the existing authenticated team WebSocket and room lifecycle.
 
-## Runtime choice
+## Build and run
 
-The desktop dependency graph uses `gtk 0.18`, `webkit2gtk 2.0.2`, and
-`glib 0.18.5` ([Cargo.lock](../Cargo.lock)). Current
-[`gstreamer 0.25.4`](https://docs.rs/crate/gstreamer/0.25.4) and
-[`gstreamer-webrtc 0.25.4`](https://docs.rs/crate/gstreamer-webrtc/0.25.4)
-use GLib 0.22. The [gtk-rs project](https://github.com/gtk-rs/gtk-rs-core)
-warns that mixing incompatible core GLib crate versions requires care.
-[`gstreamer 0.21.3`](https://docs.rs/crate/gstreamer/0.21.3) matches GLib 0.18
-but dates from 2023. Do not add current GStreamer bindings directly to the
-Tauri crate or pin the new media implementation to that historical branch.
+`pnpm --filter @ams/desktop prepare:helper` builds the native worker from
+`packages/linux-voice-worker/Cargo.lock` and stages it at
+`apps/desktop/src-tauri/helpers/ams-linux-voice-worker`. The existing desktop dev
+and bundle commands call this preparation step. Linux builders need GStreamer
+core, base and bad-plugin development libraries, plus the runtime WebRTC,
+libnice, Opus, DTLS/SRTP and PulseAudio plugins. No privileged helper runs media.
+DEB/RPM dependencies and AppImage media bundling cover the installed runtime;
+CI validates the package contents and clean-install dependencies.
 
-Build an unprivileged Linux voice sidecar as a **separate Cargo workspace with
-its own lockfile**, using a supported GStreamer Rust binding release and
-`gstreamer`, `gstreamer-webrtc`, and `gstreamer-sdp`. Bundle its executable
-with Tauri's Linux artifacts. The parent launches a fixed bundled path with
-private stdin/stdout pipes. The process uses the candidate's normal user and
-desktop audio permissions; the existing privileged network helper never runs
-media code. Do not open a localhost listener or add network exceptions.
-GStreamer's `webrtcbin` on this host exposes `ice-transport-policy=relay`.
+The worker has a separate Cargo workspace because current GStreamer bindings
+use GLib 0.22 while the Tauri GTK stack uses GLib 0.18. Its executable is a
+Linux-only Tauri resource; Windows and macOS do not build or launch it. Debug
+builds use the staged helper; release builds resolve the packaged resource.
+No binary is committed to source control.
 
-The sidecar owns one bounded session, up to four peer `webrtcbin` connections,
-native microphone capture, Opus encode/decode, and native playback. The browser
-cannot pass its proctor-owned `MediaStreamTrack` into GStreamer. Open a separate
-audio-only device source (first test the desktop's PulseAudio/PipeWire path),
-and ensure voice mute/stop never changes the proctor's stream. Confirm concurrent
-capture and speaker behavior on the supported desktop matrix. Output selection
-must be disabled or implemented against native devices; browser `setSinkId` is
-not a sidecar control.
+The app probes the actual worker before enabling Linux voice. Missing resources
+or media plugins fail closed. The worker owns one microphone capture, starts
+muted, and never changes the proctor camera/audio stream. Output uses the system
+PulseAudio/PipeWire default device. Member/master volume and mute controls work
+through native commands; browser speaker selection and browser input metering
+are not exposed for the native path. Real microphone, speaker and acoustic
+behavior still require device acceptance.
 
-## Parent and wire contract
+## Boundaries and cleanup
 
-Keep the existing frontend's authenticated WebSocket, room projection,
-credential refresh, terminal close behavior, and bounded signaling queue.
-Introduce a media transport seam in
-[`team-voice-engine.ts`](../apps/web/src/lib/team-voice-engine.ts) for browser
-RTCPeerConnection on Windows and native peer operations on Linux. Select the
-native path only after a Tauri capability command reports a healthy bundled
-sidecar. A missing sidecar, missing factories, or failed media startup must
-continue to display unavailable before acquiring the voice microphone.
+- Only the trusted main app WebView can call the bridge. The worker is launched
+  at a fixed resource path with private stdin/stdout pipes, never a shell or
+  localhost listener. Participant bearer tokens stay in the frontend.
+- IPC frames are bounded to 64 KiB; the frontend allows at most 32 pending
+  commands, and the parent serializes worker requests. Worker operations have
+  bounded deadlines. SDP promises time out after five seconds; the parent
+  watchdog kills/reaps a worker after an eight-second request deadline.
+- Each session permits at most four peers. SDP is audio-only with Opus, at most
+  48,000 bytes and 16 descriptions per peer. ICE candidates are at most 4,096
+  bytes and 96 per direction across a peer lifetime. Restarts do not refill
+  those budgets. Sender Opus bitrate is 32 kbps per peer.
+- Production peers use relay-only ICE. Reviewed TURN destinations are
+  `turn.amsaccess.com` and `43.204.79.244`; ports 3478/5349 and TLS-only 443 are
+  allowed. Incoming candidates, including SDP-embedded candidates, must name
+  the reviewed relay IP. STUN-only entries are omitted from native requests;
+  this does not enable direct peer traffic. TCP URL transport is preserved.
+- Credential expiry tears down peers. TURN server additions are capped at three
+  refreshes per peer to prevent native server-list growth. With the API's
+  default four-hour TTL, this covers the planned three-hour event; longer
+  sessions or a shorter configured TTL require rejoining after the cap.
+- Sign-out, voice closure, intentional leave and teardown stop native capture.
+  Main-page reload stops it natively. A five-second **local IPC** keepalive
+  renews a 15-second monotonic lease; renderer loss cannot leave capture running
+  indefinitely. No HTTP/WebSocket polling was added for this lease.
+- App/window destruction and process shutdown kill/reap the worker. Unexpected
+  EOF, deadline failure and fatal worker errors notify the UI; intentional stop
+  suppresses the failure notice. Stale session and peer work cannot resurrect
+  replaced media.
 
-Register narrow Linux-only commands in
-[`lib.rs`](../apps/desktop/src-tauri/src/lib.rs), with a dedicated parent module
-for the sidecar lifecycle. The commands accept a session handle/generation,
-peer ID, bounded SDP or ICE, TURN settings, mute, volume, and stop. Validate the
-calling main WebView and trusted app/development origin in the parent. The
-sidecar has **no participant bearer token**, HTTP client, or API WebSocket;
-the parent forwards only validated voice inputs. Use length-prefixed or bounded
-newline JSON frames on the private pipes, with a maximum frame size, version,
-request ID, and typed operation. Keep stdout protocol-only. Never log SDP,
-ICE, TURN usernames/passwords, or participant tokens.
+## Verification
 
-Preserve the current limits: at most four peers, 48,000 SDP bytes, 96 ICE
-candidates per direction per peer across the entire peer lifetime (24 initial
-plus three restart allowances), 4,096 candidate bytes, 16 descriptions per
-peer without a restart reset, 128 queued signaling messages, and finite
-retry/deadline behavior. The
-parent and sidecar should both enforce peer/session bounds and reject stale
-generations. Require one audio m-line with Opus and `sendrecv`; reject data/video
-and malformed descriptions. Set relay-only ICE in each native peer and accept
-TURN destinations only through the existing reviewed relay IP allowlist.
-Credential expiry closes native sessions; credentials or ICE must never add
-firewall destinations. Stop the sidecar on sign-out, contest end, page exit,
-WebView destruction, process shutdown, or crash recovery. On sidecar EOF or
-timeout, close pipes, kill/reap the child, and report unavailable.
+Run from the repository root:
 
-## Packaging and proof
+```sh
+cargo test --manifest-path packages/linux-voice-worker/Cargo.toml --locked
+cargo clippy --manifest-path packages/linux-voice-worker/Cargo.toml --all-targets --locked -- -D warnings
+cargo run --manifest-path packages/linux-voice-worker/Cargo.toml --locked -- --self-test
+cargo test -p ams-access linux_voice:: --lib
+node --test apps/web/src/lib/team-voice-native.test.mjs apps/web/src/lib/team-voice-engine.test.mjs
+```
 
-The separate Rust workspace needs Linux GStreamer development libraries in
-builders and the corresponding runtime libraries/plugins in DEB, RPM, and
-AppImage. Update `prepare:helper`, release and CI build steps,
-`tauri.conf.json` sidecar packaging, artifact inspection, and clean-install
-checks. Verify the bundled binary resolves every library on clean target
-systems. Current plugin-file and synthetic Opus/RTP checks cover prerequisites
-only.
+The worker self-test uses the production peer/description/media paths with
+synthetic sources, dummy sinks and local ICE. It requires local UDP sockets;
+a sandbox that forbids them cannot run this test. It proves decoded audio in
+both directions, without using a microphone, speaker, TURN credential or
+external server. Synthetic transport is selectable only by the dedicated
+`--self-test` CLI, not by the app's IPC protocol. Handler tests include browser
+Opus payload 111, multiline SDP, rejected malformed payloads and TLS 443.
 
-Run `python3 scripts/check-linux-native-rtc.py` on a Linux builder with
-PyGObject and Gst/GstWebRTC/GstSdp introspection. It uses two local synthetic
-audio peers, relay-only ICE with no TURN credentials or candidate exchange,
-and checks one `sendrecv` Opus m-line in both offer and answer plus stable
-signaling. It returns both pipelines to NULL and has a 15-second outer deadline.
-On the inspected host (GStreamer 1.28.9), it passed. This proves native SDP
-negotiation independently of WebKit; it does not test the Rust sidecar,
-microphone, speaker, ICE, TURN, DTLS, network lockdown, or packaged artifacts.
+Before release, test the actual packaged Linux artifact with a Windows client
+on different home networks under contest lockdown: relay-only bidirectional
+speech, muted join, Ctrl+Shift+M with editor focus, volume, microphone/device
+failure, network recovery, expiry, logout and camera continuity. Run the clean
+Ubuntu/Fedora/AppImage package gates. Synthetic local audio, mocked browser
+calls and compilation do not certify those native acceptance results.
 
-Release acceptance still requires an actual packaged Linux-to-peer call with
-two participants: muted join and unmute, both-way audio, four-peer upper bound,
-relay-only ICE through the reviewed TURN destination under active lockdown,
-credential renewal/expiry, output and input device failure, sign-out and
-terminal replacement, process crash cleanup, and DEB/RPM/AppImage checks on
-clean supported desktops. At 3,000 participants, retain the existing bounded
-polling and signaling limits and verify server/TURN load in staging; local
-client tests cannot establish that capacity.
+The change introduces no additional production API polling or team broadcast.
+Existing bounded signaling and four-peer mesh limits remain. The local tests
+are not a 3,000-participant capacity claim; server/TURN burst measurements are a
+separate staging gate.

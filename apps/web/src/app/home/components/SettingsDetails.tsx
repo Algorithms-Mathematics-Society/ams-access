@@ -287,7 +287,7 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
               {platform === "linux" && (
                 <Button
                   label="Discard saved keyboard recovery"
-                  variant="ghost"
+                  variant="secondary"
                   onClick={() => setDiscardOpen(true)}
                   isDisabled={retrying || discarding}
                 />
@@ -325,7 +325,7 @@ const RestoreLockdownCard = memo(function RestoreLockdownCard({
           <HStack gap={3} justify="end" wrap="wrap">
             <Button
               label="Keep recovery and try again"
-              variant="ghost"
+              variant="secondary"
               onClick={() => setDiscardOpen(false)}
               isDisabled={discarding}
             />

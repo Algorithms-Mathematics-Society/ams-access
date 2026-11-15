@@ -21,7 +21,16 @@ import { ArrowLeft, BookOpen, CornerUpLeft, Search, X } from "lucide-react";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
+import { IconButton } from "@astryxdesign/core/IconButton";
 import { HOME_PAGE, type Hit, labelOf, readPage, resolveHref, search } from "../cppref";
+import {
+  labelBoost,
+  loadBoostIndex,
+  readBoostPage,
+  resolveBoostHref,
+  searchBoost,
+} from "../boostref";
+import { invoke } from "@ams/api-client";
 import { referenceContent } from "../reference-content";
 import { useTheme } from "@/lib/theme";
 
@@ -155,6 +164,8 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [path, setPath] = useState(HOME_PAGE);
+  const [book, setBook] = useState<"cpp" | "boost">("cpp");
+  const [boostReady, setBoostReady] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
   const [status, setStatus] = useState<Status>({ kind: "loading" });
   const [reload, setReload] = useState(0);
@@ -189,13 +200,16 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
   useEffect(() => {
     let cancelled = false;
     setStatus({ kind: "loading" });
-    readPage(path)
+    (book === "boost" ? readBoostPage(path) : readPage(path))
       .then(({ html }) => {
         if (cancelled) return;
         const host = hostRef.current;
         if (!host) return;
         shadowRef.current ??= host.attachShadow({ mode: "open" });
-        const links = STYLESHEETS.map((href) => `<link rel="stylesheet" href="${href}">`).join("");
+        const links =
+          book === "cpp"
+            ? STYLESHEETS.map((href) => `<link rel="stylesheet" href="${href}">`).join("")
+            : "";
         // THEME_CSS comes after the book's own sheets so that, at equal
         // specificity, ours is the one that wins.
         shadowRef.current.innerHTML =
@@ -218,7 +232,7 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
     // `theme` is deliberately absent: flipping it must not refetch and
     // re-scroll the page, so the effect below just re-labels the wrapper.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, reload]);
+  }, [path, reload, book]);
 
   useEffect(() => {
     shadowRef.current?.querySelector(".cppref-page")?.setAttribute("data-theme", theme);
@@ -247,7 +261,7 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
         }
         return;
       }
-      const target = resolveHref(href, path);
+      const target = book === "boost" ? resolveBoostHref(href, path) : resolveHref(href, path);
       if (target) {
         setBlocked(null);
         go(target);
@@ -263,7 +277,7 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
       host.removeEventListener("auxclick", onActivate);
       host.removeEventListener("keydown", onActivate);
     };
-  }, [go, path]);
+  }, [go, path, book]);
 
   useEffect(() => {
     setSearchError("");
@@ -273,7 +287,7 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
     }
     let cancelled = false;
     const timer = setTimeout(() => {
-      void search(query)
+      void (book === "boost" ? searchBoost(query) : search(query))
         .then((found) => {
           if (!cancelled) {
             setHits(found);
@@ -293,9 +307,38 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query]);
+  }, [query, book]);
 
-  const crumb = useMemo(() => labelOf(path), [path]);
+  const crumb = useMemo(() => (book === "boost" ? labelBoost(path) : labelOf(path)), [path, book]);
+
+  useEffect(() => {
+    void invoke<{ installed: boolean }>("boost_reference_local_status")
+      .then((result) => setBoostReady(result.installed))
+      .catch(() => {});
+  }, []);
+
+  const chooseBook = useCallback(
+    async (next: "cpp" | "boost") => {
+      if (next === book) return;
+      setHistory([]);
+      setQuery("");
+      setHits([]);
+      setBlocked(null);
+      if (next === "boost") {
+        try {
+          const index = await loadBoostIndex();
+          setBook("boost");
+          setPath(index.home);
+        } catch (error) {
+          setSearchError(error instanceof Error ? error.message : "Boost reference unavailable.");
+        }
+      } else {
+        setBook("cpp");
+        setPath(HOME_PAGE);
+      }
+    },
+    [book]
+  );
 
   useEffect(() => {
     selectedHitRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -347,46 +390,44 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
         {/* Leaving is the commonest thing anyone does here, so it is the
             leftmost control and it says where it goes. Moving back through
             pages is the rarer action and sits with the page name it acts on. */}
-        <button
+        <Button
           type="button"
+          label="Back to contest"
+          variant="secondary"
+          size="sm"
+          icon={<ArrowLeft size={16} aria-hidden />}
           onClick={onClose}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            padding: "4px 6px",
-            color: "inherit",
-            font: "inherit",
-          }}
-        >
-          <ArrowLeft size={16} aria-hidden />
-          <Text size="sm">Back to contest</Text>
-        </button>
+        />
 
         <span style={{ width: 1, alignSelf: "stretch", background: "var(--color-border)" }} />
 
         {history.length > 0 ? (
-          <button
+          <IconButton
             type="button"
             onClick={back}
-            aria-label="Previous reference page"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              padding: 4,
-              color: "inherit",
-            }}
-          >
-            <CornerUpLeft size={15} />
-          </button>
+            label="Previous reference page"
+            variant="secondary"
+            size="sm"
+            icon={<CornerUpLeft size={15} aria-hidden />}
+          />
         ) : null}
         <BookOpen size={15} aria-hidden />
+        <Button
+          type="button"
+          label="C++"
+          size="sm"
+          variant={book === "cpp" ? "primary" : "ghost"}
+          onClick={() => void chooseBook("cpp")}
+        />
+        {boostReady ? (
+          <Button
+            type="button"
+            label="Boost"
+            size="sm"
+            variant={book === "boost" ? "primary" : "ghost"}
+            onClick={() => void chooseBook("boost")}
+          />
+        ) : null}
         <Text size="sm" style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
           {crumb}
         </Text>
@@ -398,8 +439,14 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onSearchKey}
-            placeholder="Search, e.g. std::string or vector::push_back"
-            aria-label="Search the C++ reference"
+            placeholder={
+              book === "boost"
+                ? "Search Boost articles"
+                : "Search, e.g. std::string or vector::push_back"
+            }
+            aria-label={
+              book === "boost" ? "Search the Boost reference" : "Search the C++ reference"
+            }
             spellCheck={false}
             autoComplete="off"
             style={{
@@ -413,18 +460,18 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
             }}
           />
           {query ? (
-            <button
+            <IconButton
               type="button"
+              label="Clear search"
+              variant="secondary"
+              size="sm"
+              icon={<X size={15} aria-hidden />}
               onClick={() => {
                 setQuery("");
                 setHits([]);
                 inputRef.current?.focus();
               }}
-              aria-label="Clear search"
-              style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}
-            >
-              <X size={15} />
-            </button>
+            />
           ) : null}
         </HStack>
       </HStack>
@@ -438,14 +485,15 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
           <Text size="xsm">
             {`"${blocked}" points outside the reference, so it is not available during the exam.`}
           </Text>
-          <button
+          <IconButton
             type="button"
             onClick={() => setBlocked(null)}
-            style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer" }}
-            aria-label="Dismiss"
-          >
-            <X size={14} />
-          </button>
+            style={{ marginLeft: "auto" }}
+            label="Dismiss"
+            variant="secondary"
+            size="sm"
+            icon={<X size={14} aria-hidden />}
+          />
         </HStack>
       ) : null}
 
@@ -511,7 +559,7 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
       <VStack
         ref={scrollRef}
         role="region"
-        aria-label="C++ reference article"
+        aria-label={book === "boost" ? "Boost reference article" : "C++ reference article"}
         tabIndex={0}
         gap={0}
         paddingInline={3}

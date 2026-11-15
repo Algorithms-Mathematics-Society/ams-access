@@ -238,6 +238,7 @@ function homeSignOutHandler(context, name = "signOut") {
     setResumeStatus() {},
     setActiveNav() {},
     recoveryEpochRef: { current: 0 },
+    signOutInFlightRef: { current: false },
     DEVICE_SCOPED_KEYS: new Set([STORAGE_KEYS.DEVICE_ID, STORAGE_KEYS.THEME]),
     isBufferKey,
     ...context,

@@ -93,7 +93,7 @@ export const QuestionRail = memo(function QuestionRail({
         <IconButton
           label={sidebarCollapsed ? "Expand questions list" : "Collapse questions list"}
           tooltip={sidebarCollapsed ? "Expand questions list" : "Collapse questions list"}
-          variant="ghost"
+          variant="secondary"
           size="sm"
           icon={sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}

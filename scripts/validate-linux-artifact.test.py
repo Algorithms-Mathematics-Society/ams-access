@@ -110,19 +110,22 @@ class ArtifactValidatorTests(unittest.TestCase):
         expected = {}
         for name in validator.EXPECTED:
             source = expected_root / name
-            if name == "ams-access-networkhelper":
+            if name in {"ams-access-networkhelper", "ams-linux-voice-worker"}:
                 write_elf(source)
             else:
                 source.write_bytes(("expected:" + name).encode())
             expected[name] = source
             folder = "helpers" if name in {
-                "ams-access-networkhelper", "ams-proctor-helper.service",
+                "ams-access-networkhelper", "ams-linux-voice-worker", "ams-proctor-helper.service",
                 "com.ams.access.networkhelper.policy",
             } else "models/blazeface"
-            target = root / "usr/lib/ams-access/resources" / folder / name
+            target = root / "usr/lib/AMS Access" / folder / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
         write_elf(root / "usr/bin/ams-access")
+        for library in validator.APPIMAGE_VOICE_LIBRARIES:
+            bundled = root / "usr/lib" / library
+            bundled.write_bytes(b"fixture")
         for hook in ("postinst", "prerm"):
             shutil.copy2(validator.TAURI / "debian" / hook, control / hook)
         return root, control, expected
@@ -155,6 +158,15 @@ class ArtifactValidatorTests(unittest.TestCase):
             failed = {item["name"] for item in result["checks"] if not item["ok"]}
             self.assertIn("main:x86_64-executable", failed)
 
+    def test_voice_worker_must_be_executable_at_fixed_resource_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, control, expected = self.make_tree(Path(tmp))
+            worker = next(root.rglob("ams-linux-voice-worker"))
+            worker.chmod(0o644)
+            result = self.inspect(root, control, expected)
+            failed = {item["name"] for item in result["checks"] if not item["ok"]}
+            self.assertIn("voice-worker:x86_64-executable", failed)
+
     def test_changed_model_and_missing_media_plugin_fail(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, control, expected = self.make_tree(Path(tmp))
@@ -182,6 +194,8 @@ class ArtifactValidatorTests(unittest.TestCase):
             root, control, expected = self.make_tree(base)
             packaged_helper = next(root.rglob("ams-access-networkhelper"))
             packaged_helper.write_bytes(packaged_helper.read_bytes() + b"RUNPATH:$ORIGIN")
+            packaged_voice = next(root.rglob("ams-linux-voice-worker"))
+            packaged_voice.write_bytes(packaged_voice.read_bytes() + b"RUNPATH:$ORIGIN")
             for library in validator.APPIMAGE_MEDIA_PLUGINS.values():
                 plugin = root / "usr/lib/gstreamer-1.0" / library
                 plugin.parent.mkdir(parents=True, exist_ok=True)
@@ -199,6 +213,8 @@ class ArtifactValidatorTests(unittest.TestCase):
             self.assertEqual(
                 validator.sha256(rewriter), helper_check["detail"]["rewriter_sha256"]
             )
+            voice_check = next(item for item in result["checks"] if item["name"] == "resource:ams-linux-voice-worker")
+            self.assertTrue(voice_check["ok"])
 
     def test_appimage_rewriter_does_not_accept_other_binary_changes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -206,6 +222,8 @@ class ArtifactValidatorTests(unittest.TestCase):
             root, control, expected = self.make_tree(base)
             packaged_helper = next(root.rglob("ams-access-networkhelper"))
             packaged_helper.write_bytes(packaged_helper.read_bytes() + b"RUNPATH:$ORIGIN-tampered")
+            packaged_voice = next(root.rglob("ams-linux-voice-worker"))
+            packaged_voice.write_bytes(packaged_voice.read_bytes() + b"RUNPATH:$ORIGIN")
             for library in validator.APPIMAGE_MEDIA_PLUGINS.values():
                 plugin = root / "usr/lib/gstreamer-1.0" / library
                 plugin.parent.mkdir(parents=True, exist_ok=True)
@@ -242,6 +260,18 @@ class ArtifactValidatorTests(unittest.TestCase):
             result = self.inspect(root, control, expected, "appimage")
             failed = {item["name"] for item in result["checks"] if not item["ok"]}
             self.assertEqual({"appimage:gstreamer-nice"}, failed)
+
+    def test_appimage_missing_worker_linked_library_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, control, expected = self.make_tree(Path(tmp))
+            for library in validator.APPIMAGE_MEDIA_PLUGINS.values():
+                plugin = root / "usr/lib/gstreamer-1.0" / library
+                plugin.parent.mkdir(parents=True, exist_ok=True)
+                plugin.write_bytes(b"fixture")
+            (root / "usr/lib/libgstwebrtc-1.0.so.0").unlink()
+            result = self.inspect(root, control, expected, "appimage")
+            failed = {item["name"] for item in result["checks"] if not item["ok"]}
+            self.assertEqual({"appimage:voice-library-libgstwebrtc-1.0.so.0"}, failed)
 
     def test_appimage_offset_skips_false_early_magic(self):
         with tempfile.TemporaryDirectory() as tmp:

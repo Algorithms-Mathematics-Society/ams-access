@@ -325,7 +325,7 @@ export function TerminalPanel({
               : "Collapse output panel"
           }
           {...{ title: terminalCollapsed ? "Expand output panel" : "Collapse output panel" }}
-          variant="ghost"
+          variant="secondary"
           size="sm"
           aria-expanded={!terminalCollapsed}
           aria-controls="contest-output-body"

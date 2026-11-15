@@ -1,14 +1,15 @@
 "use client";
 
 import { Mic, MicOff } from "lucide-react";
-import { createVoiceAutoJoinGate } from "@/lib/team-voice-input";
 import { useVoiceEndedNotice } from "./VoiceEndedNotice";
 import { LeaveTeamVoice } from "./LeaveTeamVoice";
 import { TeamVoicePresentation } from "./TeamVoicePresentation";
+import { acquireOrdinaryEscape } from "../escape-ownership";
 import { voiceStatusText, voiceErrorAdvice } from "@/lib/team-voice-presentation";
 import { supportsTeamDesktopWebView } from "@/lib/team-platform";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@astryxdesign/core/Button";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
@@ -31,6 +32,7 @@ import {
   type TeamVoiceSession,
   type TeamVoiceSnapshot,
 } from "@/lib/team-voice-engine";
+import { createLinuxVoiceBackend, probeLinuxVoice } from "@/lib/team-voice-native";
 
 /** One voice session consumes the room’s shared team projection across lobby and workspace. */
 export function TeamVoiceControls({
@@ -41,7 +43,16 @@ export function TeamVoiceControls({
   compact = false,
   toolbarTarget = null,
   lobbyTarget = null,
+  membersTarget = null,
+  renderMembers,
+  onMembersReady,
 }: {
+  onMembersReady?: (ready: boolean) => void;
+  membersTarget?: HTMLElement | null;
+  renderMembers?: (
+    snapshot: TeamVoiceSnapshot | null,
+    onVolume: (uid: string, volume: number) => void
+  ) => ReactNode;
   compact?: boolean;
   toolbarTarget?: HTMLElement | null;
   lobbyTarget?: HTMLElement | null;
@@ -50,6 +61,12 @@ export function TeamVoiceControls({
   suspended?: boolean;
   projection: { board: VoiceTeam | null; status: string; error: string | null };
 }) {
+  const hasMembersRenderer = Boolean(renderMembers);
+  useEffect(() => {
+    if (!membersTarget || !hasMembersRenderer) return;
+    onMembersReady?.(true);
+    return () => onMembersReady?.(false);
+  }, [membersTarget, hasMembersRenderer, onMembersReady]);
   const team = projection.board;
   const endedNotice = useVoiceEndedNotice({
     contestUid,
@@ -59,11 +76,34 @@ export function TeamVoiceControls({
     compact,
     toolbarTarget,
   });
-  const supportsRtc = typeof RTCPeerConnection === "function";
+  const linuxNative = typeof navigator !== "undefined" && navigator.platform === "Linux x86_64";
+  const [nativeSupported, setNativeSupported] = useState(false);
+  const nativeProbe = useRef<Promise<boolean> | null>(null);
+  const connectPending = useRef(false);
+  const supportsRtc = linuxNative ? nativeSupported : typeof RTCPeerConnection === "function";
   const [snapshot, setSnapshot] = useState<TeamVoiceSnapshot | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
-  const autoJoin = useRef(createVoiceAutoJoinGate());
+  const [confirmJoin, setConfirmJoin] = useState(false);
+  const suspendedRef = useRef(suspended);
+  suspendedRef.current = suspended;
+  useEffect(() => {
+    if (suspended) setConfirmJoin(false);
+  }, [suspended]);
+  useEffect(() => {
+    if (!confirmJoin || compact || suspended) return;
+    const releaseEscape = acquireOrdinaryEscape();
+    const cancelJoin = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || suspendedRef.current) return;
+      event.preventDefault();
+      setConfirmJoin(false);
+    };
+    window.addEventListener("keydown", cancelJoin, true);
+    return () => {
+      window.removeEventListener("keydown", cancelJoin, true);
+      releaseEscape();
+    };
+  }, [confirmJoin, compact, suspended]);
   const session = useRef<TeamVoiceSession | null>(null);
   const current = useRef<() => boolean>(() => false);
   const unsubscribeSession = useRef<(() => void) | null>(null);
@@ -76,7 +116,21 @@ export function TeamVoiceControls({
   const connectCurrent = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
-    autoJoin.current.reset();
+    if (!linuxNative || !window.__TAURI__) return;
+    let alive = true;
+    const probe = probeLinuxVoice();
+    nativeProbe.current = probe;
+    void probe.then((available) => {
+      if (alive) setNativeSupported(available);
+    });
+    return () => {
+      alive = false;
+      nativeProbe.current = null;
+    };
+  }, [linuxNative]);
+
+  useEffect(() => {
+    setConfirmJoin(false);
     setSnapshot(null);
     setMessage(null);
     setOutputs([]);
@@ -147,7 +201,7 @@ export function TeamVoiceControls({
       session.current?.stop();
       session.current = null;
       setSnapshot(null);
-    } else if (resumeAfterPoll.current || autoJoin.current.take(current.current())) {
+    } else if (resumeAfterPoll.current) {
       resumeAfterPoll.current = false;
       setResumePending(false);
       void connectCurrent.current();
@@ -157,15 +211,26 @@ export function TeamVoiceControls({
   async function connect() {
     const authorized = current.current;
     const lifecycle = lifecycleAbort.current;
-    if (!authorized() || !open.current) return;
-    if (!supportsRtc) {
+    if (!authorized() || !open.current || suspendedRef.current) return;
+    if (connectPending.current) return;
+    connectPending.current = true;
+    const available = linuxNative ? await (nativeProbe.current ?? probeLinuxVoice()) : supportsRtc;
+    if (!authorized() || !open.current || suspendedRef.current) {
+      connectPending.current = false;
+      return;
+    }
+    if (!available) {
+      connectPending.current = false;
       setMessage(
         "Team voice is unavailable in this app. Ask your organizer for a supported app build or device."
       );
       return;
     }
-    autoJoin.current.take(true);
-    if (session.current?.getSnapshot().status === "connecting") return;
+    if (linuxNative) setNativeSupported(true);
+    if (session.current?.getSnapshot().status === "connecting") {
+      connectPending.current = false;
+      return;
+    }
     setMessage(null);
     unsubscribeSession.current?.();
     session.current?.stop();
@@ -176,7 +241,10 @@ export function TeamVoiceControls({
         if (!authorized()) throw new Error("Voice session ended");
         return participantToken() ?? "";
       },
-      acquireMicrophone: () => acquireVoiceMicrophone(cameraSession.current()),
+      acquireMicrophone: linuxNative
+        ? undefined
+        : () => acquireVoiceMicrophone(cameraSession.current()),
+      nativeVoice: linuxNative ? createLinuxVoiceBackend : undefined,
       refreshCredentials: async () => {
         if (!authorized()) throw new Error("Voice session ended");
         // No AbortSignal.any/timeout: macOS 12 WebKit can predate both.
@@ -212,14 +280,21 @@ export function TeamVoiceControls({
         active.stop();
         return;
       }
-      if ("setSinkId" in HTMLMediaElement.prototype) {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        if (current.current() && session.current === active)
-          setOutputs(devices.filter((device) => device.kind === "audiooutput"));
+      if (!linuxNative && "setSinkId" in HTMLMediaElement.prototype) {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          if (current.current() && session.current === active)
+            setOutputs(devices.filter((device) => device.kind === "audiooutput"));
+        } catch {
+          // Output selection is optional; system default still plays connected audio.
+          if (current.current() && session.current === active) setOutputs([]);
+        }
       }
     } catch {
       if (current.current() && session.current === active)
         setMessage("Voice could not start. Check your connection, then choose Retry voice.");
+    } finally {
+      connectPending.current = false;
     }
   }
 
@@ -242,6 +317,7 @@ export function TeamVoiceControls({
         key.toLowerCase() === "m" || (!/^[\x20-\x7e]$/.test(key) && event.code === "KeyM");
       if (
         !suspended &&
+        Boolean(compact ? toolbarTarget : lobbyTarget) &&
         current.current() &&
         active &&
         event.ctrlKey &&
@@ -261,7 +337,7 @@ export function TeamVoiceControls({
     // Capture before the focused editor; one chord must never run both actions.
     window.addEventListener("keydown", muteShortcut, true);
     return () => window.removeEventListener("keydown", muteShortcut, true);
-  }, [suspended]);
+  }, [suspended, compact, toolbarTarget, lobbyTarget]);
 
   const projectionMessage =
     projection.status === "error"
@@ -269,18 +345,40 @@ export function TeamVoiceControls({
         ? "Team status is reconnecting. Your work is safe."
         : "Team status is unavailable."
       : null;
-  if (!enabled || (!team && !message && !projectionMessage)) return endedNotice;
+  const members =
+    membersTarget && renderMembers
+      ? createPortal(
+          <VStack gap={0} inert={suspended || undefined}>
+            {renderMembers(enabled ? snapshot : null, (uid, volume) =>
+              session.current?.setMemberVolume(uid, volume)
+            )}
+          </VStack>,
+          membersTarget
+        )
+      : null;
+  if (!enabled || (!team && !message && !projectionMessage))
+    return (
+      <>
+        {endedNotice}
+        {members}
+      </>
+    );
   const connected = snapshot?.status === "connected" || snapshot?.status === "reconnecting";
   const busy = snapshot?.status === "connecting";
   return (
     <>
       {endedNotice}
+      {members}
       <TeamVoicePresentation
         compact={compact}
         toolbarTarget={toolbarTarget}
         lobbyTarget={lobbyTarget}
         suspended={suspended}
         snapshot={snapshot}
+        notice={!supportsRtc ? "Voice unavailable in this app" : projectionMessage || message}
+        onRequestJoin={() => setConfirmJoin(true)}
+        onDismiss={() => setConfirmJoin(false)}
+        canJoin={Boolean(team?.phase.voice_open && voiceOpen && supportsRtc)}
         onToggleMute={toggleMute}
       >
         <VStack
@@ -302,38 +400,48 @@ export function TeamVoiceControls({
         >
           <HStack gap={3} wrap="wrap" align="center">
             <Text weight="semibold">Team voice</Text>
-            <Text role="status" aria-live="polite">
-              {!supportsRtc
-                ? "Voice unavailable in this app"
-                : snapshot
-                  ? voiceStatusText(snapshot.status)
-                  : team?.phase.voice_open
-                    ? "Ready · microphone starts muted"
-                    : "Voice has ended for this round"}
-            </Text>
-            {team?.phase.voice_open && !connected && snapshot?.status !== "closed" && (
-              <Button
-                label={
-                  busy
-                    ? "Connecting…"
-                    : snapshot?.status === "replaced"
-                      ? "Move voice back to this window"
-                      : snapshot?.status === "unavailable"
-                        ? "Retry voice"
-                        : "Join voice"
-                }
-                isDisabled={!supportsRtc || busy || !voiceOpen || suspended}
-                onClick={() => void connect()}
-              />
+            {snapshot?.status !== "connected" && (
+              <Text role="status" aria-live="polite">
+                {!supportsRtc
+                  ? "Voice unavailable in this app"
+                  : snapshot
+                    ? voiceStatusText(snapshot.status)
+                    : team?.phase.voice_open
+                      ? "Ready"
+                      : "Voice has ended for this round"}
+              </Text>
             )}
-            {connected && (
+            {team?.phase.voice_open &&
+              !connected &&
+              !confirmJoin &&
+              snapshot?.status !== "closed" && (
+                <Button
+                  label={
+                    busy
+                      ? "Connecting…"
+                      : snapshot?.status === "replaced"
+                        ? "Move voice back to this window"
+                        : snapshot?.status === "unavailable"
+                          ? "Retry voice"
+                          : "Join voice"
+                  }
+                  isDisabled={!supportsRtc || busy || !voiceOpen || suspended}
+                  onClick={() => setConfirmJoin(true)}
+                />
+              )}
+            {connected && !compact && (
               <Button
                 label={snapshot?.muted ? "Muted" : "Live"}
-                aria-label={snapshot?.muted ? "Unmute team microphone" : "Mute team microphone"}
+                aria-label={
+                  snapshot?.muted ? "Muted: unmute team microphone" : "Live: mute team microphone"
+                }
                 aria-pressed={!snapshot?.muted}
                 aria-keyshortcuts="Control+Shift+M"
+                tooltip={`${snapshot?.muted ? "Unmute" : "Mute"} team microphone (Ctrl+Shift+M)`}
                 icon={snapshot?.muted ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
                 style={{
+                  background: snapshot?.muted ? undefined : "var(--color-success-muted)",
+                  borderColor: snapshot?.muted ? undefined : "var(--color-border-green)",
                   color: snapshot?.muted
                     ? "var(--color-text-secondary)"
                     : "var(--color-text-green)",
@@ -357,47 +465,64 @@ export function TeamVoiceControls({
                 }}
               />
             )}
-            {connected && (
-              <Text>
-                Mute shortcut:{" "}
-                {typeof navigator !== "undefined" && navigator.platform === "MacIntel"
-                  ? "⌃⇧M (Control-Shift-M)"
-                  : "Ctrl+Shift+M"}
-              </Text>
-            )}
-            {connected && snapshot?.error && (
-              <Button
-                label="Retry audio playback"
-                isDisabled={suspended}
-                onClick={() =>
-                  void session.current
-                    ?.retryPlayback()
-                    .catch(() =>
-                      setMessage("Playback is still blocked. Check system audio output and retry.")
-                    )
-                }
-              />
-            )}
+            {connected &&
+              snapshot?.error === "Allow audio playback to hear your team." &&
+              !linuxNative && (
+                <Button
+                  label="Retry audio playback"
+                  isDisabled={suspended}
+                  onClick={() =>
+                    void session.current
+                      ?.retryPlayback()
+                      .then(() => setMessage(null))
+                      .catch(() =>
+                        setMessage(
+                          "Playback is still blocked. Check system audio output and retry."
+                        )
+                      )
+                  }
+                />
+              )}
           </HStack>
+          {confirmJoin && !connected && !busy && (
+            <VStack gap={2}>
+              <Text>Join team voice? Your microphone starts muted. You can unmute when ready.</Text>
+              <HStack gap={2} wrap="wrap">
+                <Button label="Cancel" onClick={() => setConfirmJoin(false)} />
+                <Button
+                  label="Confirm join voice"
+                  variant="primary"
+                  isDisabled={!supportsRtc || !voiceOpen || suspended}
+                  onClick={() => {
+                    if (suspendedRef.current) return;
+                    setConfirmJoin(false);
+                    void connect();
+                  }}
+                />
+              </HStack>
+            </VStack>
+          )}
           {(!supportsRtc || message || projectionMessage || snapshot?.error) && (
             <Text role="status">
               {!supportsRtc
                 ? "Ask your organizer for a supported app build or device. You can continue with team parts."
-                : (message ?? projectionMessage ?? voiceErrorAdvice(snapshot?.error ?? null))}
+                : (message ??
+                  (snapshot?.error ? voiceErrorAdvice(snapshot.error) : projectionMessage))}
             </Text>
           )}
           {connected && (
             <VStack gap={1}>
-              <Text>Microphone starts muted. Only unmuting sends your voice to the team.</Text>
-              <Text aria-label="Microphone input level">
-                {snapshot?.inputLevel == null
-                  ? "Input level unavailable. Enable the local meter to check your microphone."
-                  : `Microphone input: ${Math.round(snapshot.inputLevel * 100)}%`}
-              </Text>
-              {snapshot?.inputLevel == null && (
+              {!linuxNative && (
+                <Text aria-label="Microphone input level">
+                  {snapshot?.inputLevel == null
+                    ? "Input level unavailable. Enable the local meter to check your microphone."
+                    : `Microphone input: ${Math.round(snapshot.inputLevel * 100)}%`}
+                </Text>
+              )}
+              {!linuxNative && snapshot?.inputLevel == null && (
                 <Button
                   label="Enable microphone meter"
-                  variant="ghost"
+                  variant="secondary"
                   isDisabled={suspended}
                   onClick={() => void session.current?.retryPlayback().catch(() => {})}
                 />
@@ -407,13 +532,8 @@ export function TeamVoiceControls({
               )}
             </VStack>
           )}
-          {team && (compact || connected) && (
-            <VStack as={compact ? "section" : "details"} gap={2}>
-              {!compact && (
-                <summary>
-                  <Text as="span">Member audio settings</Text>
-                </summary>
-              )}
+          {team && compact && (
+            <VStack as="section" gap={2}>
               <List header="Team members" density="compact" hasDividers>
                 {voiceMemberRows(team, snapshot).map(({ key, member, peer, status }) => (
                   <ListItem
@@ -442,7 +562,7 @@ export function TeamVoiceControls({
               </List>
             </VStack>
           )}
-          {connected && (
+          {connected && !linuxNative && (
             <HStack gap={4} wrap="wrap" align="start">
               {outputs.some((device) => !device.label) && (
                 <Text>

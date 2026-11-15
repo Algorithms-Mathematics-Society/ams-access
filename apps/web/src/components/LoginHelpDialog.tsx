@@ -142,7 +142,7 @@ function LoginHelpContent({ onClose, hasError, diagnostic }: Props) {
         <VStack gap={2}>
           <Button
             label={review ? "Hide troubleshooting details" : "Review troubleshooting details"}
-            variant="ghost"
+            variant="secondary"
             aria-expanded={review}
             aria-controls="login-help-details"
             onClick={() => setReview(!review)}

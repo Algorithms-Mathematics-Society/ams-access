@@ -260,7 +260,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
                 isLoading={checkingNetwork}
               />
               {onOpenSettings && (
-                <Button label="Open settings" variant="ghost" onClick={onOpenSettings} />
+                <Button label="Open settings" variant="secondary" onClick={onOpenSettings} />
               )}
             </HStack>
           </HStack>
@@ -403,7 +403,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
                 variant="secondary"
                 onClick={copySupportSummary}
               />
-              <Button label="Export diagnostic report" variant="ghost" onClick={exportReport} />
+              <Button label="Export diagnostic report" variant="secondary" onClick={exportReport} />
             </HStack>
           </HStack>
           <Text type="supporting">

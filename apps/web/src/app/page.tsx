@@ -217,7 +217,7 @@ export default function RootPage() {
               />
               <Button
                 label="Not you? Sign out"
-                variant="ghost"
+                variant="secondary"
                 onClick={() => {
                   signOutPreviousCandidate();
                   setGate("welcome");

@@ -209,7 +209,12 @@ export const ReadinessWidget = memo(function ReadinessWidget({
               icon={<Icon icon="wrench" size="sm" />}
             />
           )}
-          <Button label="Open settings" variant="ghost" onClick={onSettingsRedirect} width="100%" />
+          <Button
+            label="Open settings"
+            variant="secondary"
+            onClick={onSettingsRedirect}
+            width="100%"
+          />
         </VStack>
       </VStack>
     </Card>

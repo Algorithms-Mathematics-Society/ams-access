@@ -76,7 +76,7 @@ export function CloseAppButton() {
     <>
       <Button
         label="Close app"
-        variant="ghost"
+        variant="secondary"
         onClick={() => {
           setOpen(true);
           setMessage("");

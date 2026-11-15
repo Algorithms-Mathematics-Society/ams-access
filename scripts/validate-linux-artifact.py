@@ -23,6 +23,7 @@ REPO = Path(__file__).resolve().parents[1]
 TAURI = REPO / "apps/desktop/src-tauri"
 EXPECTED = {
     "ams-access-networkhelper": TAURI / "helpers/ams-access-networkhelper",
+    "ams-linux-voice-worker": TAURI / "helpers/ams-linux-voice-worker",
     "ams-proctor-helper.service": TAURI / "helpers/ams-proctor-helper.service",
     "com.ams.access.networkhelper.policy": TAURI / "helpers/com.ams.access.networkhelper.policy",
     "group1-shard1of1.bin": REPO / "apps/web/public/models/blazeface/group1-shard1of1.bin",
@@ -33,7 +34,9 @@ REQUIRED_DEPENDENCIES = {
     "deb": (
         "libwebkit2gtk-4.1-0", "libgtk-3-0", "libglib2.0-bin", "pkexec",
         "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good",
-        "gstreamer1.0-plugins-bad", "gstreamer1.0-nice",
+        "gstreamer1.0-plugins-bad", "gstreamer1.0-nice", "gstreamer1.0-pulseaudio",
+        "libgstreamer1.0-0", "libgstreamer-plugins-base1.0-0",
+        "libgstreamer-plugins-bad1.0-0", "libnice10",
     ),
     "rpm": ("webkit2gtk4.1", "gtk3", "gstreamer1-plugins-base", "gstreamer1-plugins-good",
             "gstreamer1-plugins-bad-free", "libnice-gstreamer1"),
@@ -41,6 +44,7 @@ REQUIRED_DEPENDENCIES = {
 APPIMAGE_MEDIA_PLUGINS = {
     "v4l2": "libgstvideo4linux2.so",
     "webrtc": "libgstwebrtc.so",
+    "pulse": "libgstpulseaudio.so",
     "nice": "libgstnice.so",
     "dtls": "libgstdtls.so",
     "srtp": "libgstsrtp.so",
@@ -48,6 +52,12 @@ APPIMAGE_MEDIA_PLUGINS = {
     "rtp": "libgstrtp.so",
     "rtpmanager": "libgstrtpmanager.so",
 }
+APPIMAGE_VOICE_LIBRARIES = (
+    "libgstreamer-1.0.so.0", "libgstwebrtc-1.0.so.0", "libgstsdp-1.0.so.0",
+    "libgstrtp-1.0.so.0", "libgstpbutils-1.0.so.0", "libgstbase-1.0.so.0",
+    "libgstvideo-1.0.so.0", "libgstaudio-1.0.so.0", "libgsttag-1.0.so.0",
+    "libgstallocators-1.0.so.0",
+)
 FORBIDDEN_DEPENDENCIES = {
     "rpm": ("xorg-x11-server-utils",),
 }
@@ -199,7 +209,7 @@ def inspect_tree(
         expected_hashes = {sha256(source)} if source.exists() else set()
         identity_mode = "exact-source"
         rewriter_hash = None
-        if kind == "appimage" and name == "ams-access-networkhelper" and appimage_patchelf is not None:
+        if kind == "appimage" and name in {"ams-access-networkhelper", "ams-linux-voice-worker"} and appimage_patchelf is not None:
             expected_hashes = {rewritten_helper_hash(source, appimage_patchelf)}
             identity_mode = "exact-linuxdeploy-patchelf-output"
             rewriter_hash = sha256(appimage_patchelf)
@@ -217,6 +227,13 @@ def inspect_tree(
     helper = matches(root, "ams-access-networkhelper")
     helper = [p for p in helper if "helpers" in p.parts]
     check("helper:x86_64-executable", len(helper) == 1 and elf_x86_64(helper[0]) and os.access(helper[0], os.X_OK), [str(p.relative_to(root)) for p in helper])
+    voice = matches(root, "ams-linux-voice-worker")
+    voice_path = root / "usr/lib/AMS Access/helpers/ams-linux-voice-worker"
+    check(
+        "voice-worker:x86_64-executable",
+        len(voice) == 1 and voice[0] == voice_path and elf_x86_64(voice_path) and os.access(voice_path, os.X_OK),
+        [str(p.relative_to(root)) for p in voice],
+    )
 
     # Do not let AppRun, a library, or another bundled executable stand in for
     # the product binary. Tauri places it at this path in all three formats.
@@ -261,6 +278,9 @@ def inspect_tree(
         for name, library in APPIMAGE_MEDIA_PLUGINS.items():
             plugins = [p for p in root.rglob(library) if p.is_file()]
             check(f"appimage:gstreamer-{name}", bool(plugins), [str(p.relative_to(root)) for p in plugins])
+        for library in APPIMAGE_VOICE_LIBRARIES:
+            found = [p for p in root.rglob(library) if p.is_file()]
+            check(f"appimage:voice-library-{library}", bool(found), [str(p.relative_to(root)) for p in found])
 
     return {"checks": checks, "valid": all(item["ok"] for item in checks)}
 

@@ -1,4 +1,5 @@
 "use client";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 import { supportsTeamDesktopWebView } from "@/lib/team-platform";
 
@@ -193,6 +194,14 @@ import {
 } from "./answer-buffer";
 import { AUTH_RECHECK_MS, onUnauthorized } from "./auth-loss";
 import { attemptLimitError, runCooldownMessage } from "./attempt-limits";
+import {
+  MAX_SOURCE_FILES,
+  isCompilationUnit,
+  sourcePathError,
+  sourceWorkspaceError,
+  workspaceFingerprint,
+  workspaceFromFiles,
+} from "./source-workspace";
 import { isBell, paperIsOpen, type ClockPhase, type ClockSnapshot } from "./session-clock";
 import {
   connectionLevel,
@@ -419,6 +428,8 @@ export default function ContestPageClient() {
   const lobbyController = useRef<ReturnType<typeof createTeamLobbyController> | null>(null);
   const [voiceToolbarTarget, setVoiceToolbarTarget] = useState<HTMLDivElement | null>(null);
   const [lobbyVoiceTarget, setLobbyVoiceTarget] = useState<HTMLElement | null>(null);
+  const [lobbyMembersTarget, setLobbyMembersTarget] = useState<HTMLElement | null>(null);
+  const [voiceMembersReady, setVoiceMembersReady] = useState(false);
   const [enteredTeamPart, setEnteredTeamPart] = useState(false);
   const loadedTeamWorkspace = useRef<WorkspaceIdentity | null>(null);
   const paperAssets = useRef<string[]>([]);
@@ -540,6 +551,7 @@ export default function ContestPageClient() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [questionFiles, setQuestionFiles] = useState<Record<string, EditorFile[]>>({});
   const [questionActiveFile, setQuestionActiveFile] = useState<Record<string, string>>({});
+  const [questionEntrypoints, setQuestionEntrypoints] = useState<Record<string, string>>({});
   const { theme: appTheme } = useTheme();
   const [editorThemeOverride, setEditorThemeOverride] = useState<ContestEditorThemeId | null>(null);
   const editorTheme =
@@ -560,6 +572,7 @@ export default function ContestPageClient() {
     fileId: string;
     filename: string;
     problemTitle?: string;
+    workspaceFingerprint?: string;
   };
   const [runSources, setRunSources] = useState<
     Record<string, Partial<Record<"all" | "custom", RunSourceSnapshot | null>>>
@@ -657,6 +670,7 @@ export default function ContestPageClient() {
     source: string;
     language: string;
     files: EditorFile[];
+    entrypoint?: string;
   } | null>(null);
   // Bumped on a failed save so the debounced autosave effect re-arms and retries
   // even when the candidate has stopped typing (e.g. a transient network blip).
@@ -691,6 +705,9 @@ export default function ContestPageClient() {
     problemLabel: string;
     language: string;
     source: string;
+    sourceFiles?: { path: string; content: string }[];
+    entrypoint?: string;
+    compilationUnits?: string[];
     idempotencyKey: string;
   } | null>(null);
   const acknowledgedSubmitKeysRef = useRef<Record<string, string>>({});
@@ -845,9 +862,9 @@ export default function ContestPageClient() {
   }
   const micEnabledRef = useRef(false);
   const mediaInitialStateLoggedRef = useRef(false);
-  const [hasToggledMedia, setHasToggledMedia] = useState(false);
+  const hasToggledMediaRef = useRef(false);
   const [showMediaToggleWarning, setShowMediaToggleWarning] = useState(false);
-  const [pendingMediaToggle, setPendingMediaToggle] = useState<{
+  const pendingMediaToggleRef = useRef<{
     type: "camera" | "mic";
     value: boolean;
   } | null>(null);
@@ -1195,6 +1212,10 @@ export default function ContestPageClient() {
   }
 
   function applyMediaToggle(type: "camera" | "mic", value: boolean) {
+    // Repeated events can retain the previous render’s target value. Only a
+    // real transition owns a track update and its audit event.
+    const enabled = type === "camera" ? cameraEnabledRef : micEnabledRef;
+    if (enabled.current === value) return;
     if (type === "camera") {
       setCameraEnabled(value);
       cameraEnabledRef.current = value;
@@ -1222,10 +1243,13 @@ export default function ContestPageClient() {
   }
 
   function handleToggleMedia(type: "camera" | "mic", value: boolean) {
+    const enabled = type === "camera" ? cameraEnabledRef : micEnabledRef;
+    if (enabled.current === value) return;
     // The one-time confirmation only applies when turning a device OFF —
     // enabling the (default-off) microphone needs no proctoring warning.
-    if (!hasToggledMedia && !value) {
-      setPendingMediaToggle({ type, value });
+    if (pendingMediaToggleRef.current) return;
+    if (!hasToggledMediaRef.current && !value) {
+      pendingMediaToggleRef.current = { type, value };
       setShowMediaToggleWarning(true);
       return;
     }
@@ -1233,17 +1257,17 @@ export default function ContestPageClient() {
   }
 
   function confirmMediaToggle() {
-    setHasToggledMedia(true);
+    const pending = pendingMediaToggleRef.current;
+    if (!pending) return;
+    pendingMediaToggleRef.current = null;
+    hasToggledMediaRef.current = true;
     setShowMediaToggleWarning(false);
-    if (pendingMediaToggle) {
-      applyMediaToggle(pendingMediaToggle.type, pendingMediaToggle.value);
-      setPendingMediaToggle(null);
-    }
+    applyMediaToggle(pending.type, pending.value);
   }
 
   const cancelMediaToggle = useCallback(() => {
     setShowMediaToggleWarning(false);
-    setPendingMediaToggle(null);
+    pendingMediaToggleRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -1803,6 +1827,7 @@ export default function ContestPageClient() {
       if (!isCurrentLoad()) return;
       const restoredFiles: Record<string, EditorFile[]> = {};
       const restoredActiveFiles: Record<string, string> = {};
+      const restoredEntrypoints: Record<string, string> = {};
       // A first offline draft may have no server row at all. Enumerate the paper.
       for (const question of questions) {
         const buffered = readAnswerBuffer(localStorage, live.uid, question.id);
@@ -1811,7 +1836,19 @@ export default function ContestPageClient() {
           buffered?.revision ?? 0,
           server?.client_revision ?? 0
         );
-        if (server) serverDraftRef.current[question.id] = `${server.language}\n${server.source}`;
+        if (server)
+          serverDraftRef.current[question.id] =
+            question.multi_file_enabled && server.source_files?.length && server.entrypoint
+              ? workspaceFingerprint(server.language, {
+                  source_files: server.source_files,
+                  entrypoint: server.entrypoint,
+                  compilation_units:
+                    server.compilation_units ??
+                    server.source_files
+                      .filter((file) => isCompilationUnit(file.path))
+                      .map((file) => file.path),
+                })
+              : `${server.language}\n${server.source}`;
         const workspace = restoreDraftWorkspace(
           question.id,
           question.starter_filename ?? questionFileName(question, "C++23"),
@@ -1819,8 +1856,21 @@ export default function ContestPageClient() {
           server
         );
         if (workspace) {
-          restoredFiles[question.id] = workspace.files;
-          restoredActiveFiles[question.id] = workspace.activeFileId;
+          const files = question.multi_file_enabled
+            ? workspace.files.filter((file) => !file.id.includes(":reference:"))
+            : workspace.files;
+          restoredFiles[question.id] = files;
+          restoredActiveFiles[question.id] = files.some(
+            (file) => file.id === workspace.activeFileId
+          )
+            ? workspace.activeFileId
+            : (files[0]?.id ?? "");
+          if (question.multi_file_enabled)
+            restoredEntrypoints[question.id] =
+              workspace.entrypoint ??
+              question.entrypoint ??
+              files.find((file) => isCompilationUnit(file.name))?.name ??
+              "";
           answersMap[question.id] = {
             language: workspace.language,
             content:
@@ -1833,6 +1883,7 @@ export default function ContestPageClient() {
       }
       setQuestionFiles(restoredFiles);
       setQuestionActiveFile(restoredActiveFiles);
+      setQuestionEntrypoints(restoredEntrypoints);
       setSavedAnswers(answersMap);
       setRestoredFromDevice(restored);
       if (restored.length) setHasUnsavedChanges(true);
@@ -1943,6 +1994,19 @@ export default function ContestPageClient() {
 
     setQuestionFiles((prev) => {
       if (prev[q.id]) return prev;
+      if (q.multi_file_enabled) {
+        const starterFiles = q.starter_files?.length
+          ? q.starter_files
+          : [{ path: q.entrypoint ?? q.starter_filename ?? "main.cpp", content }];
+        return {
+          ...prev,
+          [q.id]: starterFiles.map((file) => ({
+            id: `${q.id}:source:${file.path}`,
+            name: file.path,
+            content: file.content,
+          })),
+        };
+      }
       const file: EditorFile = {
         id: `${q.id}:main`,
         name: q.starter_filename ?? questionFileName(q, lang),
@@ -1952,8 +2016,30 @@ export default function ContestPageClient() {
     });
     setQuestionActiveFile((prev) => {
       if (prev[q.id]) return prev;
-      return { ...prev, [q.id]: `${q.id}:main` };
+      const entrypoint =
+        q.entrypoint ??
+        q.starter_files?.find((file) => isCompilationUnit(file.path))?.path ??
+        q.starter_filename ??
+        "main.cpp";
+      return {
+        ...prev,
+        [q.id]:
+          q.multi_file_enabled && entrypoint ? `${q.id}:source:${entrypoint}` : `${q.id}:main`,
+      };
     });
+    if (q.multi_file_enabled)
+      setQuestionEntrypoints((prev) =>
+        prev[q.id]
+          ? prev
+          : {
+              ...prev,
+              [q.id]:
+                q.entrypoint ??
+                q.starter_files?.find((file) => isCompilationUnit(file.path))?.path ??
+                q.starter_filename ??
+                "main.cpp",
+            }
+      );
   }
 
   function loadQuestion(q: Question, language: string) {
@@ -2014,6 +2100,10 @@ export default function ContestPageClient() {
       source: files.find((f) => f.id === activeFileId)?.content ?? "",
       language: toLanguageId(normalizedLanguage),
       files,
+      entrypoint:
+        latest?.sessionId === sessionId && latest.questionId === q.id
+          ? (latest.entrypoint ?? questionEntrypoints[q.id])
+          : questionEntrypoints[q.id],
     };
     writeLocalAnswerBuffer();
     setQuestionFiles((prev) => (prev[q.id] ? { ...prev, [q.id]: changeFiles(prev[q.id]) } : prev));
@@ -2055,6 +2145,10 @@ export default function ContestPageClient() {
           ? latest.language
           : toLanguageId(selectedLanguage),
       files,
+      entrypoint:
+        latest?.sessionId === sessionId && latest.questionId === qId
+          ? (latest.entrypoint ?? questionEntrypoints[qId])
+          : questionEntrypoints[qId],
     };
     writeLocalAnswerBuffer();
     setQuestionFiles((prev) => ({
@@ -2063,6 +2157,94 @@ export default function ContestPageClient() {
         f.id === currentActiveId ? { ...f, content: value } : f
       ),
     }));
+  }
+
+  function replaceSourceFiles(files: EditorFile[], fileId: string, entrypoint: string) {
+    const qId = questions[activeQ]?.id;
+    if (!qId || !sessionId) return;
+    const latest = latestActiveDraftRef.current;
+    latestActiveDraftRef.current = {
+      sessionId,
+      questionId: qId,
+      fileId,
+      source: files.find((file) => file.id === fileId)?.content ?? "",
+      language:
+        latest?.sessionId === sessionId && latest.questionId === qId
+          ? latest.language
+          : toLanguageId(selectedLanguage),
+      files,
+      entrypoint,
+    };
+    writeLocalAnswerBuffer();
+    setQuestionFiles((previous) => ({ ...previous, [qId]: files }));
+    setQuestionActiveFile((previous) => ({ ...previous, [qId]: fileId }));
+    setQuestionEntrypoints((previous) => ({ ...previous, [qId]: entrypoint }));
+    setHasUnsavedChanges(true);
+  }
+
+  function addSourceFile(path: string): string | null {
+    const q = questions[activeQ];
+    if (!q?.multi_file_enabled || editorLocked || teamPartReadOnly)
+      return "Editing is unavailable.";
+    const error = sourcePathError(path);
+    if (error) return error;
+    const draft = activeDraftSnapshot();
+    if (draft.files.length >= MAX_SOURCE_FILES)
+      return `A workspace supports up to ${MAX_SOURCE_FILES} files.`;
+    if (
+      draft.files.some(
+        (file) => file.name.toLocaleLowerCase("en-US") === path.toLocaleLowerCase("en-US")
+      )
+    )
+      return "A file with this path already exists.";
+    if (
+      draft.files.some((file) => {
+        const existing = file.name.toLocaleLowerCase("en-US");
+        const candidate = path.toLocaleLowerCase("en-US");
+        return existing.startsWith(`${candidate}/`) || candidate.startsWith(`${existing}/`);
+      })
+    )
+      return "A file cannot also be a folder.";
+    if (
+      q.reference_docs?.some((doc) => {
+        const reference = doc.path.toLocaleLowerCase("en-US");
+        const candidate = path.toLocaleLowerCase("en-US");
+        return (
+          reference === candidate ||
+          reference.startsWith(`${candidate}/`) ||
+          candidate.startsWith(`${reference}/`)
+        );
+      })
+    )
+      return "This path is reserved by an organizer reference document.";
+    const fileId = `${q.id}:source:${path}`;
+    replaceSourceFiles(
+      [...draft.files, { id: fileId, name: path, content: "" }],
+      fileId,
+      draft.entrypoint ?? questionEntrypoints[q.id]
+    );
+    return null;
+  }
+
+  function removeSourceFile(fileId: string) {
+    const q = questions[activeQ];
+    if (!q?.multi_file_enabled || editorLocked || teamPartReadOnly) return;
+    const draft = activeDraftSnapshot();
+    const files = draft.files.filter((file) => file.id !== fileId);
+    const nextUnit = files.find((file) => isCompilationUnit(file.name));
+    if (!nextUnit || files.length === draft.files.length) return;
+    const oldEntry = draft.entrypoint ?? questionEntrypoints[q.id];
+    const entrypoint = files.some((file) => file.name === oldEntry) ? oldEntry : nextUnit.name;
+    replaceSourceFiles(files, files[0].id, entrypoint);
+  }
+
+  function setSourceEntrypoint(path: string) {
+    const q = questions[activeQ];
+    if (!q?.multi_file_enabled || editorLocked || teamPartReadOnly || !isCompilationUnit(path))
+      return;
+    const draft = activeDraftSnapshot();
+    if (!draft.files.some((file) => file.name === path)) return;
+    replaceSourceFiles(draft.files, draft.fileId, path);
   }
 
   function activeDraftSnapshot() {
@@ -2074,6 +2256,7 @@ export default function ContestPageClient() {
       fileId: activeFileId,
       source: editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
       language: toLanguageId(selectedLanguage),
+      entrypoint: questionEntrypoints[questions[activeQ]?.id ?? ""],
     };
   }
 
@@ -2092,10 +2275,18 @@ export default function ContestPageClient() {
       ...previous,
       [questions[activeQ].id]: { source: "run" },
     }));
-    const limitError = attemptLimitError(
-      editorFiles.find((f) => f.id === activeFileId)?.content ?? "",
-      useCustomCases ? toWire(casesOverride ?? customCases) : null
-    );
+    const pendingDraft = activeDraftSnapshot();
+    const multiFile = questions[activeQ].multi_file_enabled === true;
+    const runWorkspace = multiFile
+      ? workspaceFromFiles(pendingDraft.files, pendingDraft.entrypoint ?? "")
+      : null;
+    const limitError = runWorkspace
+      ? (sourceWorkspaceError(runWorkspace) ??
+        attemptLimitError("source", useCustomCases ? toWire(casesOverride ?? customCases) : null))
+      : attemptLimitError(
+          pendingDraft.source,
+          useCustomCases ? toWire(casesOverride ?? customCases) : null
+        );
     if (limitError) {
       setRunMode(mode);
       resetRunPanelState(mode);
@@ -2112,7 +2303,7 @@ export default function ContestPageClient() {
     // Persist the current code before dispatching to the judge. A failed
     // device write is surfaced by the draft status; it does not block a run,
     // which sends the source to the judge directly.
-    const runDraft = activeDraftSnapshot();
+    const runDraft = pendingDraft;
     await handleSave();
     if (runVisit !== runVisitRef.current) return;
 
@@ -2123,12 +2314,23 @@ export default function ContestPageClient() {
     try {
       setRunSourceSnapshot(
         {
-          fileId: runDraft.fileId,
+          fileId: runWorkspace
+            ? (runDraft.files.find((file) => file.name === runWorkspace.entrypoint)?.id ??
+              runDraft.fileId)
+            : runDraft.fileId,
           questionId: questions[activeQ].id,
           problemTitle: questions[activeQ].title,
-          filename: runDraft.files.find((f) => f.id === runDraft.fileId)?.name ?? "main.cpp",
-          source: runDraft.source,
+          filename:
+            runWorkspace?.entrypoint ??
+            runDraft.files.find((f) => f.id === runDraft.fileId)?.name ??
+            "main.cpp",
+          source:
+            runWorkspace?.source_files.find((file) => file.path === runWorkspace.entrypoint)
+              ?.content ?? runDraft.source,
           language: runDraft.language,
+          workspaceFingerprint: runWorkspace
+            ? workspaceFingerprint(runDraft.language, runWorkspace)
+            : undefined,
         },
         mode
       );
@@ -2136,6 +2338,13 @@ export default function ContestPageClient() {
         problemLabel: questions[activeQ].id,
         language: runDraft.language,
         source: runDraft.source,
+        ...(runWorkspace
+          ? {
+              sourceFiles: runWorkspace.source_files,
+              entrypoint: runWorkspace.entrypoint,
+              compilationUnits: runWorkspace.compilation_units,
+            }
+          : {}),
         // Only when the candidate pressed Run Custom. An ordinary Run must
         // send nothing here, or the samples are never reached.
         customCases: useCustomCases ? toWire(casesOverride ?? customCases) : null,
@@ -2290,6 +2499,7 @@ export default function ContestPageClient() {
       // receives the active file.
       files: draft.files,
       activeFileId: draft.fileId,
+      ...(questions[activeQ]?.multi_file_enabled ? { entrypoint: draft.entrypoint } : {}),
       savedAtMs: Date.now(),
       revision: draftRevisionsRef.current[qId] ?? 0,
     });
@@ -2356,9 +2566,13 @@ export default function ContestPageClient() {
     // In-flight guard: block a second POST while one is pending so rapid
     // double-clicks / retries can't enqueue duplicate attempts.
     if (submitInFlightRef.current || exitInFlightRef.current) return;
-    const limitError = attemptLimitError(
-      editorFiles.find((f) => f.id === activeFileId)?.content ?? ""
-    );
+    const snapshot = activeDraftSnapshot();
+    const submissionWorkspace = questions[activeQ].multi_file_enabled
+      ? workspaceFromFiles(snapshot.files, snapshot.entrypoint ?? "")
+      : null;
+    const limitError = submissionWorkspace
+      ? sourceWorkspaceError(submissionWorkspace)
+      : attemptLimitError(snapshot.source);
     if (limitError) {
       setSubmissionError(limitError);
       return;
@@ -2375,10 +2589,17 @@ export default function ContestPageClient() {
 
     try {
       const qId = questions[activeQ].id;
-      const draft = activeDraftSnapshot();
+      const draft = snapshot;
       const submittedSource = {
         source: draft.source,
         language: draft.language,
+        ...(submissionWorkspace
+          ? {
+              sourceFiles: submissionWorkspace.source_files,
+              entrypoint: submissionWorkspace.entrypoint,
+              compilationUnits: submissionWorkspace.compilation_units,
+            }
+          : {}),
       };
       const retryKey = `ams_pending_submission:${sessionId}:${qId}`;
       let previousRequest = submitKeyRef.current;
@@ -2400,15 +2621,22 @@ export default function ContestPageClient() {
           stored.problemLabel === qId &&
           typeof stored.language === "string" &&
           typeof stored.source === "string" &&
+          (!stored.sourceFiles ||
+            (Array.isArray(stored.sourceFiles) &&
+              typeof stored.entrypoint === "string" &&
+              Array.isArray(stored.compilationUnits) &&
+              sourceWorkspaceError({
+                source_files: stored.sourceFiles,
+                entrypoint: stored.entrypoint,
+                compilation_units: stored.compilationUnits,
+              }) === null)) &&
           typeof stored.idempotencyKey === "string" &&
           stored.idempotencyKey.length > 0 &&
           stored.idempotencyKey.length <= 64 &&
           stored.idempotencyKey !== acknowledgedSubmitKeysRef.current[retryKey]
         ) {
           previousRequest = stored;
-          recoveredRetry =
-            stored.language === submittedSource.language &&
-            stored.source === submittedSource.source;
+          recoveredRetry = true;
         }
       } catch {
         // Malformed stored data has no usable retry identity.
@@ -2416,9 +2644,7 @@ export default function ContestPageClient() {
       if (
         !previousRequest ||
         previousRequest.sessionId !== sessionId ||
-        previousRequest.problemLabel !== qId ||
-        previousRequest.language !== submittedSource.language ||
-        previousRequest.source !== submittedSource.source
+        previousRequest.problemLabel !== qId
       ) {
         previousRequest = {
           sessionId,
@@ -2441,12 +2667,31 @@ export default function ContestPageClient() {
       // A lost response must not make changed code (or another problem) reuse
       // the original attempt. Send the same snapshot used to select the key.
       const request = previousRequest;
+      if (
+        recoveredRetry &&
+        (request.language !== submittedSource.language ||
+          request.source !== submittedSource.source ||
+          JSON.stringify(request.sourceFiles ?? null) !==
+            JSON.stringify(submittedSource.sourceFiles ?? null) ||
+          request.entrypoint !== submittedSource.entrypoint)
+      ) {
+        setSubmissionError(
+          "Retrying your earlier unconfirmed submission. Your newer edits remain in the workspace."
+        );
+      }
       let created;
       try {
         created = await submitSolution(request.sessionId, {
           problemLabel: request.problemLabel,
           language: request.language,
           source: request.source,
+          ...(request.sourceFiles
+            ? {
+                sourceFiles: request.sourceFiles,
+                entrypoint: request.entrypoint,
+                compilationUnits: request.compilationUnits,
+              }
+            : {}),
           idempotencyKey: request.idempotencyKey,
         });
       } catch (caught) {
@@ -2458,6 +2703,17 @@ export default function ContestPageClient() {
           return;
         }
         if (caught instanceof ProctorApiError) {
+          // A definitive rejection did not create an attempt. Allow corrected
+          // code to use a new key; retain uncertain transport/server failures.
+          if ([400, 403, 404, 409, 413, 422, 429].includes(caught.status)) {
+            submitKeyRef.current = null;
+            acknowledgedSubmitKeysRef.current[retryKey] = request.idempotencyKey;
+            try {
+              localStorage.removeItem(retryKey);
+            } catch {
+              localStorage.setItem(retryKey, JSON.stringify({ acknowledged: true }));
+            }
+          }
           // 409 is a closed session, 429 a rate limit; both already carry a
           // sentence written for a candidate, so pass it through rather than
           // mapping it to a worse one here.
@@ -2491,7 +2747,13 @@ export default function ContestPageClient() {
         setSubmissionError(
           "Confirmed an earlier submission request. Check the attempt list before submitting again."
         );
-      setSubmittedSources((prev) => ({ ...prev, [created.uid]: submittedSource }));
+      setSubmittedSources((prev) => ({
+        ...prev,
+        [created.uid]: {
+          source: request.source,
+          language: request.language,
+        },
+      }));
       if (
         submissionOwner?.active &&
         submissionOwner === submissionRefreshRef.current &&
@@ -3255,7 +3517,8 @@ export default function ContestPageClient() {
           if (cancelled || draftBackupOffRef.current) return;
           const next = draftBackup(
             readAnswerBuffer(localStorage, sessionId, question.id),
-            serverDraftRef.current[question.id]
+            serverDraftRef.current[question.id],
+            question.multi_file_enabled === true
           );
           if (!next) continue;
           try {
@@ -3263,6 +3526,13 @@ export default function ContestPageClient() {
               source: next.source,
               language: next.language,
               clientRevision: (draftRevisionsRef.current[question.id] ?? 0) + 1,
+              ...(next.sourceFiles
+                ? {
+                    sourceFiles: next.sourceFiles,
+                    entrypoint: next.entrypoint,
+                    compilationUnits: next.compilationUnits,
+                  }
+                : {}),
             });
             if (cancelled) return;
             // The server answers with what it holds, which is another device's
@@ -3271,7 +3541,18 @@ export default function ContestPageClient() {
               draftRevisionsRef.current[question.id] ?? 0,
               saved.client_revision
             );
-            serverDraftRef.current[question.id] = `${saved.language}\n${saved.source}`;
+            serverDraftRef.current[question.id] =
+              question.multi_file_enabled && saved.source_files?.length && saved.entrypoint
+                ? workspaceFingerprint(saved.language, {
+                    source_files: saved.source_files,
+                    entrypoint: saved.entrypoint,
+                    compilation_units:
+                      saved.compilation_units ??
+                      saved.source_files
+                        .filter((file) => isCompilationUnit(file.path))
+                        .map((file) => file.path),
+                  })
+                : `${saved.language}\n${saved.source}`;
           } catch (caught) {
             if (
               !cancelled &&
@@ -4217,7 +4498,9 @@ export default function ContestPageClient() {
     void triggerRun(true, next);
   }
   const activeFile = editorFiles.find((file) => file.id === activeFileId) ?? editorFiles[0] ?? null;
-  const isEditorEmpty = !activeFile?.content;
+  const isEditorEmpty = currentQuestion?.multi_file_enabled
+    ? editorFiles.every((file) => !file.content.trim())
+    : !activeFile?.content;
   const currentCode = activeFile?.content ?? "";
   // Event handlers persist immediately; a committed render then becomes the
   // source for later saves, before the passive persistence effect runs.
@@ -4229,8 +4512,16 @@ export default function ContestPageClient() {
       source: currentCode,
       language: toLanguageId(selectedLanguage),
       files: editorFiles,
+      entrypoint: questionEntrypoints[currentQId],
     };
-  }, [questionFiles, questionActiveFile, selectedLanguage, currentQId, sessionId]);
+  }, [
+    questionFiles,
+    questionActiveFile,
+    questionEntrypoints,
+    selectedLanguage,
+    currentQId,
+    sessionId,
+  ]);
 
   // The local buffer is the only persistence. Written on every change rather
   // than debounced: a localStorage write costs nothing, and the debounce only
@@ -4238,7 +4529,14 @@ export default function ContestPageClient() {
   useEffect(() => {
     if (sessionId && currentQId) writeLocalAnswerBuffer();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [questionFiles, questionActiveFile, selectedLanguage, currentQId, sessionId]);
+  }, [
+    questionFiles,
+    questionActiveFile,
+    questionEntrypoints,
+    selectedLanguage,
+    currentQId,
+    sessionId,
+  ]);
 
   const currentDescriptionMd = currentQuestion?.description ?? "*No description provided.*";
   const problemSections = useMemo(
@@ -4398,9 +4696,15 @@ export default function ContestPageClient() {
     return Boolean(
       snapshot &&
       (snapshot.questionId !== currentQId ||
-        snapshot.fileId !== activeFileId ||
-        snapshot.filename !== (activeFile?.name ?? "main.cpp") ||
-        snapshot.source !== currentCode ||
+        (snapshot.workspaceFingerprint
+          ? snapshot.workspaceFingerprint !==
+            workspaceFingerprint(
+              toLanguageId(selectedLanguage),
+              workspaceFromFiles(editorFiles, questionEntrypoints[currentQId] ?? "")
+            )
+          : snapshot.fileId !== activeFileId ||
+            snapshot.filename !== (activeFile?.name ?? "main.cpp") ||
+            snapshot.source !== currentCode) ||
         snapshot.language !== toLanguageId(selectedLanguage))
     );
   }
@@ -4770,6 +5074,18 @@ export default function ContestPageClient() {
     timeUpState,
   ]);
 
+  const canEnterTeamPart =
+    entryReady &&
+    !editorLocked &&
+    !criticalOverlayActive &&
+    !networkOverlayActive &&
+    !leaveConfirm &&
+    !submitConfirm &&
+    !showSupportChat &&
+    !showSupportModal &&
+    !showMediaToggleWarning &&
+    !pendingRedirect;
+
   if (pendingRedirect) {
     return loadError ? (
       <ContestLoadErrorScreen
@@ -4802,6 +5118,7 @@ export default function ContestPageClient() {
   const cameraTile = (
     <CameraTile
       inLobby={renderTeamLobby}
+      teamVoice={desktopTeamRoom && lobbyState.status !== "solo"}
       presenceStatus={presenceStatus}
       onPickCamera={handlePickCamera}
       cameraVideoRef={cameraVideoRef}
@@ -4975,6 +5292,11 @@ export default function ContestPageClient() {
               compact={!renderTeamLobby}
               toolbarTarget={voiceToolbarTarget}
               lobbyTarget={lobbyVoiceTarget}
+              membersTarget={renderTeamLobby ? lobbyMembersTarget : null}
+              onMembersReady={setVoiceMembersReady}
+              renderMembers={(snapshot, onVolume) => (
+                <TeamLobbyMembers state={lobbyState} snapshot={snapshot} onVolume={onVolume} />
+              )}
               contestUid={contestId}
               projection={lobbyState}
               enabled={
@@ -5023,6 +5345,7 @@ export default function ContestPageClient() {
                   voiceTargetRef={setLobbyVoiceTarget}
                   actions={
                     <HStack gap={2} wrap="wrap" aria-label="Lobby actions">
+                      <ThemeToggle />
                       <Button
                         label="Help"
                         variant="secondary"
@@ -5037,9 +5360,12 @@ export default function ContestPageClient() {
                   onRelease={() => {
                     void lobbyController.current?.release();
                   }}
-                  canEnter={!editorLocked}
+                  onReady={() => {
+                    if (canEnterTeamPart) lobbyController.current?.ready();
+                  }}
+                  canEnter={canEnterTeamPart}
                   onEnter={() => {
-                    if (!editorLocked) setEnteredTeamPart(true);
+                    if (canEnterTeamPart) setEnteredTeamPart(true);
                   }}
                 />
               </VStack>
@@ -5181,6 +5507,16 @@ export default function ContestPageClient() {
                     currentCode={currentCode}
                     handleCodeChange={handleCodeChange}
                     handleResetCode={handleResetCode}
+                    multiFile={currentQuestion?.multi_file_enabled === true}
+                    entrypoint={questionEntrypoints[currentQId]}
+                    referenceDocs={
+                      currentQuestion?.multi_file_enabled
+                        ? currentQuestion.reference_docs
+                        : undefined
+                    }
+                    onAddFile={addSourceFile}
+                    onRemoveFile={removeSourceFile}
+                    onSetEntrypoint={setSourceEntrypoint}
                   />
                   {!terminalCollapsed && (
                     <WorkspaceResizeHandle
@@ -5268,7 +5604,12 @@ export default function ContestPageClient() {
             </>
           )}
           {cameraTile}
-          {renderTeamLobby && <TeamLobbyMembers state={lobbyState} />}
+          {renderTeamLobby && (
+            <VStack gap={0} style={{ minWidth: 0, gridArea: "members" }}>
+              {!voiceMembersReady && <TeamLobbyMembers state={lobbyState} />}
+              <VStack ref={setLobbyMembersTarget} gap={0} />
+            </VStack>
+          )}
         </VStack>
         {!renderTeamLobby && (
           <FooterTrustStrip
@@ -5560,7 +5901,7 @@ export default function ContestPageClient() {
               />
               <Button
                 label="Check results status"
-                variant="ghost"
+                variant="secondary"
                 onClick={() => router.push(`/results?contestId=${encodeURIComponent(contestId)}`)}
               />
             </HStack>
@@ -5674,7 +6015,7 @@ export default function ContestPageClient() {
               </HStack>
             </>
           )}
-          <Button label="Leave contest" variant="ghost" onClick={requestLeave} />
+          <Button label="Leave contest" variant="secondary" onClick={requestLeave} />
           {sentReports.some((report) => report.sessionId === sessionId) && (
             <VStack
               as="section"

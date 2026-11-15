@@ -43,6 +43,18 @@ export function toCandidateQuestion(
     description: projection.statement.markdown,
     starter_code: projection.starter?.source ?? null,
     starter_filename: projection.starter?.filename ?? null,
+    multi_file_enabled: projection.multi_file_enabled === true,
+    starter_files:
+      projection.multi_file_enabled === true
+        ? projection.starter_files?.map((file) => ({ path: file.path, content: file.content }))
+        : undefined,
+    reference_docs:
+      projection.multi_file_enabled === true
+        ? projection.reference_docs?.map((file) => ({ path: file.path, content: file.content }))
+        : undefined,
+    entrypoint: projection.multi_file_enabled === true ? projection.entrypoint : undefined,
+    compilation_units:
+      projection.multi_file_enabled === true ? projection.compilation_units : undefined,
     order_index: orderIndex,
     question_type: "coding",
     points: projection.score,

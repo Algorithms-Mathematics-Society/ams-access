@@ -43,6 +43,7 @@
   inset-block-end: max(var(--spacing-6), env(safe-area-inset-bottom));
   inset-inline-end: max(var(--spacing-6), env(safe-area-inset-right));
   color: var(--startup-ink);
+  background: color-mix(in srgb, var(--startup-ink) 14%, var(--startup-ground));
 }
 
 .overlay .skip:hover {

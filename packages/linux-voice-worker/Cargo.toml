@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["."]
+
+[package]
+name = "ams-linux-voice-worker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gstreamer = "0.25.3"
+gstreamer-sdp = "0.25.3"
+gstreamer-webrtc = "0.25.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"

@@ -217,27 +217,8 @@ export const ScheduledContestCard = memo(
             disabled={!canJoin}
             title={entryState.disabledTitle}
             theme={theme}
-            variant={canJoin ? "primary" : phase === "too_early" ? "secondary" : "ghost"}
+            variant={canJoin ? "primary" : "secondary"}
             style={{
-              border: `1px solid ${
-                canJoin
-                  ? themeColors.accent
-                  : phase === "too_early"
-                    ? "var(--home-status-warn-border-35)"
-                    : phase === "blocked" || phase === "metadata_unavailable"
-                      ? "var(--home-status-error-border-28)"
-                      : themeColors.border
-              }`,
-              background: canJoin
-                ? "var(--color-accent-base)"
-                : phase === "too_early"
-                  ? "var(--home-status-warn-bg)"
-                  : "var(--home-overlay-disabled)",
-              color: canJoin
-                ? "var(--color-on-accent)"
-                : phase === "too_early"
-                  ? "var(--home-status-warn)"
-                  : themeColors.textMuted,
               boxShadow: hovered && canJoin ? btnHoverShadow : "none",
               transition: "box-shadow var(--transition-slow)",
             }}

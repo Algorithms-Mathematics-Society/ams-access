@@ -7,6 +7,7 @@ import { StatusDot } from "@astryxdesign/core/StatusDot";
 
 export interface CameraTileProps {
   inLobby?: boolean;
+  teamVoice?: boolean;
   cameraVideoRef: RefObject<HTMLVideoElement | null>;
   cameraStream: MediaStream | null;
   cameraError: string | null;
@@ -46,6 +47,7 @@ const PRESENCE_BORDER: Record<string, string> = {
 
 export function CameraTile({
   inLobby = false,
+  teamVoice = false,
   presenceStatus = "presence_ok",
   onPickCamera,
   cameraVideoRef,
@@ -133,11 +135,18 @@ export function CameraTile({
           tooltip={
             cameraEnabled ? "Camera on — click to turn off" : "Camera off — click to turn on"
           }
-          variant="ghost"
+          variant="secondary"
           size="sm"
           isIconOnly
           icon={cameraEnabled ? <Video size={16} /> : <VideoOff size={16} />}
-          onClick={() => handleToggleMedia("camera", !cameraEnabled)}
+          onClick={(event) => {
+            if (event.detail > 1) return;
+            handleToggleMedia("camera", !cameraEnabled);
+          }}
+          onKeyDown={(event) => {
+            if (event.repeat && (event.key === "Enter" || event.key === " "))
+              event.preventDefault();
+          }}
         />
         {/* Changing camera without leaving the exam.
          *
@@ -153,25 +162,34 @@ export function CameraTile({
             type="button"
             label="Change camera"
             tooltip="Change camera"
-            variant="ghost"
+            variant="secondary"
             size="sm"
             isIconOnly
             icon={<SwitchCamera size={16} />}
             onClick={() => setPickerOpen((open) => !open)}
           />
         )}
-        <Button
-          type="button"
-          label={micEnabled ? "Turn microphone off" : "Turn microphone on"}
-          tooltip={
-            micEnabled ? "Microphone on — click to turn off" : "Microphone off — click to turn on"
-          }
-          variant="ghost"
-          size="sm"
-          isIconOnly
-          icon={micEnabled ? <Mic size={16} /> : <MicOff size={16} />}
-          onClick={() => handleToggleMedia("mic", !micEnabled)}
-        />
+        {!teamVoice && (
+          <Button
+            type="button"
+            label={micEnabled ? "Turn microphone off" : "Turn microphone on"}
+            tooltip={
+              micEnabled ? "Microphone on — click to turn off" : "Microphone off — click to turn on"
+            }
+            variant="secondary"
+            size="sm"
+            isIconOnly
+            icon={micEnabled ? <Mic size={16} /> : <MicOff size={16} />}
+            onClick={(event) => {
+              if (event.detail > 1) return;
+              handleToggleMedia("mic", !micEnabled);
+            }}
+            onKeyDown={(event) => {
+              if (event.repeat && (event.key === "Enter" || event.key === " "))
+                event.preventDefault();
+            }}
+          />
+        )}
       </HStack>
       {onPickCamera && pickerOpen && cameras.length > 0 && (
         <VStack
@@ -184,6 +202,9 @@ export function CameraTile({
             right: "var(--spacing-2)",
             zIndex: 3,
             maxWidth: "min(18rem, calc(100% - var(--spacing-4)))",
+            maxHeight: "calc(100% - var(--spacing-10) - var(--spacing-4))",
+            boxSizing: "border-box",
+            overflowY: "auto",
             padding: "var(--spacing-1)",
             background: "var(--color-background-card)",
             border: "var(--border-width) solid var(--color-border)",

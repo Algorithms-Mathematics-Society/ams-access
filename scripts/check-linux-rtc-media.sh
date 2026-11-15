@@ -29,4 +29,4 @@ fi
 timeout 20 gst-launch-1.0 -q audiotestsrc num-buffers=20 ! \
     audioconvert ! audioresample ! opusenc ! rtpopuspay ! \
     rtpopusdepay ! opusdec ! fakesink sync=false
-printf '%s\n' 'Linux voice media factories and Opus/RTP round trip available; WebKit browser WebRTC capability is a separate check'
+printf '%s\n' 'Linux voice media factories and Opus/RTP round trip available; native worker startup is checked separately'

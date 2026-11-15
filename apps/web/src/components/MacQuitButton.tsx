@@ -49,7 +49,7 @@ export function MacQuitButton() {
   }
   return (
     <VStack gap={2} align="end">
-      <Button label="Quit" variant="ghost" size="sm" isLoading={busy} onClick={quit} />
+      <Button label="Quit" variant="secondary" size="sm" isLoading={busy} onClick={quit} />
       {error && (
         <Text role="alert" type="supporting" style={{ maxWidth: "28ch" }}>
           {error}

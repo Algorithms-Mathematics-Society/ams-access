@@ -6,6 +6,7 @@ import { report as reportViolation } from "@/lib/violation-queue";
 import { toLanguageId } from "./components/language";
 import { editorLockExtensions } from "./editor-lock";
 import { CONTEST_INDENT_UNIT, formatView } from "./format-code";
+import { setEditorEscapeFocused } from "./escape-ownership";
 import {
   DEFAULT_EDITOR_PREFERENCES,
   editorPreferenceExtensions,
@@ -526,18 +527,6 @@ function createContestEditorTheme(themeId: ContestEditorThemeId): Extension {
   return extensions;
 }
 
-/// Tell the native keyboard hook whether bare Escape should be swallowed.
-/// While the editor is focused Escape must reach CodeMirror (dismiss
-/// autocomplete, close search, cancel selection); everywhere else it stays
-/// blocked so it cannot interact with system UI. No-op outside Tauri.
-function setNativeEscapeBlocked(blocked: boolean) {
-  type TauriGlobal = {
-    core: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
-  };
-  const tauri = (window as unknown as { __TAURI__?: TauriGlobal }).__TAURI__;
-  void tauri?.core.invoke("set_escape_blocked", { blocked }).catch(() => {});
-}
-
 /**
  * The pane currently on screen, so the toolbar can format without the
  * command being drilled through EditorPanel. Same shape as
@@ -596,10 +585,10 @@ function createEditorExtensions(
   return [
     EditorView.domEventHandlers({
       focus: () => {
-        setNativeEscapeBlocked(false);
+        setEditorEscapeFocused(true);
       },
       blur: () => {
-        setNativeEscapeBlocked(true);
+        setEditorEscapeFocused(false);
       },
       copy: (_event, view) => {
         const sel = view.state.sliceDoc(
@@ -809,9 +798,9 @@ export default function EditorPane({
       view.destroy();
       if (viewRef.current === view) viewRef.current = null;
       if (activeView === view) activeView = null;
-      // The destroyed view never fires blur — re-arm Escape blocking so a
-      // tab switch or page exit can never leave Escape passing through.
-      setNativeEscapeBlocked(true);
+      // The destroyed view never fires blur; release its Escape ownership.
+      // An open ordinary popover retains its own ownership until it closes.
+      setEditorEscapeFocused(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeQ, activeTab, extensions]);

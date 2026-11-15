@@ -26,7 +26,7 @@ export function LeaveTeamVoice({
       <Button
         ref={leave}
         label="Leave voice"
-        variant="ghost"
+        variant="secondary"
         isDisabled={isDisabled}
         onClick={() => setConfirming(true)}
       />
@@ -37,7 +37,7 @@ export function LeaveTeamVoice({
       <Button
         ref={stay}
         label="Stay in voice"
-        variant="secondary"
+        variant="primary"
         isDisabled={isDisabled}
         onClick={() => {
           returnFocus.current = true;
@@ -46,7 +46,7 @@ export function LeaveTeamVoice({
       />
       <Button
         label="Confirm leave voice"
-        variant="ghost"
+        variant="destructive"
         isDisabled={isDisabled}
         onClick={() => {
           setConfirming(false);

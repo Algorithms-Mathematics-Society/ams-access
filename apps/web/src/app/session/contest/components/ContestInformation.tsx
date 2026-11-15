@@ -42,7 +42,7 @@ export const ContestInformation = memo(function ContestInformation({
         label="Contest info"
         tooltip="Contest info"
         icon={<Info size={16} aria-hidden="true" />}
-        variant="ghost"
+        variant="secondary"
         isDisabled={suspended}
         onClick={() => {
           setClockMessage(clockDifferenceMessage(clockIsSynchronised(), serverNow(), Date.now()));

@@ -127,7 +127,7 @@ function DashboardTopActions({
       <ThemeToggle />
       <Button
         label={label}
-        variant="ghost"
+        variant="secondary"
         isDisabled={signingOut}
         onClick={onSignOut}
         icon={<Icon icon={LogOut} size="sm" />}

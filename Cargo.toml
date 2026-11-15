@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["packages/linux-voice-worker"]
 members = [
     "apps/desktop/src-tauri",
     "packages/platform-rs",

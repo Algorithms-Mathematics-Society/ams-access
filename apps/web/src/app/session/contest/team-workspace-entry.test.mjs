@@ -70,9 +70,9 @@ test("same authorized locked assignment recovers without reinstalling drafts or 
   assert.equal(workspaceAlreadyLoaded(null, loaded), false);
 });
 
-test("published locked parts load own first and never invent or duplicate labels", () => {
-  assert.deepEqual(teamWorkspaceLabels(state()), ["A", "B"]);
-  assert.deepEqual(teamWorkspaceLabels({ ...state(), status: "error" }), ["A", "B"]);
+test("published locked parts load only the assigned part and reject ambiguous labels", () => {
+  assert.deepEqual(teamWorkspaceLabels(state()), ["A"]);
+  assert.deepEqual(teamWorkspaceLabels({ ...state(), status: "error" }), ["A"]);
   assert.deepEqual(teamWorkspaceLabels({ ...state(), status: "denied" }), []);
   assert.deepEqual(teamWorkspaceLabels(state("choosing", false)), []);
   const bad = state();
@@ -116,4 +116,186 @@ test("Finish review includes only owned team work while solo keeps every questio
   assert.deepEqual(finishReviewQuestions(questions, { status: "denied", board: null }), []);
   assert.equal(finishReviewQuestions(questions, null), questions);
   assert.equal(finishReviewQuestions(questions, { status: "solo", board: null }), questions);
+});
+
+// Render the lobby's public controls and effects. Media and
+// contest authorization stay owned by the shell, and no real timer/network starts.
+async function renderReadyLobby({
+  phase = "choosing",
+  locked = false,
+  supports = true,
+  own = true,
+  canEnter = true,
+  futureStart = false,
+  pending = false,
+  status = "team",
+} = {}) {
+  const { readFileSync } = await import("node:fs");
+  const { default: ts } = await import("typescript");
+  const source = readFileSync(new URL("./components/TeamLobby.tsx", import.meta.url), "utf8");
+  const exports = {},
+    effects = [];
+  let enters = 0,
+    readies = 0;
+  const jsx = (type, props) => ({ type, props });
+  new Function(
+    "require",
+    "exports",
+    ts.transpileModule(source, {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+    }).outputText
+  )((name) => {
+    if (name === "react")
+      return {
+        useEffect: (callback) => effects.push(callback),
+        useState: (v) => [typeof v === "function" ? v() : v, () => {}],
+      };
+    if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
+    if (name === "@/lib/team-lobby")
+      return {
+        countdownMs: () => (phase === "locked" ? null : 60000),
+        contestStartRemaining: () => (futureStart ? 60000 : 0),
+      };
+    return Object.fromEntries(
+      ["VStack", "HStack", "Heading", "Token", "Text", "List", "ListItem", "Button"].map((n) => [
+        n,
+        n,
+      ])
+    );
+  }, exports);
+  const board = {
+    team: { name: "Team" },
+    phase: { name: phase, starts_at: "2026-01-01T00:00:00Z" },
+    allocation: { locked },
+    readiness_supported: supports,
+    readiness: { ready: 0, needed: 1, mine: false, can_ready: true },
+    members: [{ display_name: "Me", is_me: true, ready: false, part_label: own ? "A" : null }],
+    parts: [{ label: "A", problem_label: "A", holder: own ? "Me" : null, holder_is_me: own }],
+  };
+  const props = {
+    state: { status, sampledAt: 0, pending, board },
+    contestUid: "contest",
+    canEnter,
+    onClaim() {},
+    onRelease() {},
+    onReady: () => readies++,
+    onEnter: () => enters++,
+  };
+  const nodes = [];
+  const visit = (node) => {
+    if (!node || typeof node !== "object") return;
+    nodes.push(node);
+    for (const child of [node.props?.children, node.props?.endContent].flat(Infinity)) visit(child);
+  };
+  let tree;
+  const render = () => {
+    nodes.length = 0;
+    effects.length = 0;
+    tree = exports.TeamLobby(props);
+    // The clock is the only interval; clean it up immediately after running effects.
+    for (const effect of effects) effect()?.();
+    visit(tree);
+  };
+  render();
+  return {
+    tree,
+    nodes,
+    board,
+    render,
+    start: () => {
+      futureStart = false;
+      render();
+    },
+    get enters() {
+      return enters;
+    },
+    get readies() {
+      return readies;
+    },
+  };
+}
+
+test("choosing offers Ready for an assigned part and never enters before the board locks", async () => {
+  const selected = await renderReadyLobby();
+  const ready = selected.nodes.find((n) => n.type === "Button" && n.props.label === "Ready");
+  assert.equal(ready.props.isDisabled, false);
+  ready.props.onClick();
+  assert.equal(selected.readies, 1);
+  assert.equal(selected.enters, 0);
+  assert.equal(
+    selected.nodes.some((n) => n.props?.label === "Go to your part"),
+    false
+  );
+  for (const patch of [{ own: false }, { canEnter: false }]) {
+    const lobby = await renderReadyLobby(patch);
+    assert.equal(
+      lobby.nodes.find((n) => n.type === "Button" && n.props.label === "Ready").props.isDisabled,
+      true
+    );
+    assert.equal(lobby.enters, 0);
+  }
+});
+
+test("locked arrival requires an explicit Ready click, including older servers", async () => {
+  const patch = { phase: "locked", locked: true };
+  for (const supports of [true, false]) {
+    const lobby = await renderReadyLobby({ ...patch, supports });
+    assert.equal(lobby.enters, 0);
+    const ready = lobby.nodes.find((n) => n.type === "Button" && n.props.label === "Ready");
+    assert.equal(ready.props.isDisabled, false);
+    ready.props.onClick();
+    assert.equal(lobby.enters, 1);
+    lobby.render();
+    assert.equal(lobby.enters, 1, "board rerenders never reenter");
+  }
+  for (const blocked of [
+    { canEnter: false },
+    { futureStart: true },
+    { own: false },
+    { locked: false },
+    { pending: true },
+    { status: "denied" },
+  ]) {
+    const lobby = await renderReadyLobby({ ...patch, ...blocked });
+    const ready = lobby.nodes.find((n) => n.type === "Button" && n.props.label === "Ready");
+    assert.equal(ready.props.isDisabled, true);
+    ready.props.onClick();
+    assert.equal(lobby.enters, 0, "entry handler also enforces disabled gates");
+  }
+});
+
+test("allocation lock and contest start transitions leave entry waiting for Ready", async () => {
+  const lobby = await renderReadyLobby({ futureStart: true });
+  lobby.board.phase.name = "locked";
+  lobby.board.allocation.locked = true;
+  lobby.render();
+  assert.equal(lobby.enters, 0);
+  lobby.start();
+  assert.equal(lobby.enters, 0);
+  const ready = lobby.nodes.find((n) => n.type === "Button" && n.props.label === "Ready");
+  assert.equal(ready.props.isDisabled, false);
+  ready.props.onClick();
+  assert.equal(lobby.enters, 1);
+});
+
+test("explicit lobby entry preserves setup, expiry and overlay fences and exposes the shared theme control", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("./client.tsx", import.meta.url), "utf8");
+  const gate = source.match(/const canEnterTeamPart =([\s\S]*?);/)[1];
+  for (const fence of [
+    "entryReady",
+    "!editorLocked",
+    "!criticalOverlayActive",
+    "!networkOverlayActive",
+    "!leaveConfirm",
+    "!submitConfirm",
+    "!showSupportChat",
+    "!showSupportModal",
+    "!showMediaToggleWarning",
+    "!pendingRedirect",
+  ])
+    assert.ok(gate.includes(fence), fence);
+  assert.match(source, /canEnter=\{canEnterTeamPart\}/);
+  assert.match(source, /if \(canEnterTeamPart\) setEnteredTeamPart\(true\)/);
+  assert.match(source, /aria-label="Lobby actions">\s*<ThemeToggle \/>/);
 });

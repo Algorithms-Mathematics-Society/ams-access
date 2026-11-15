@@ -520,6 +520,12 @@ export type ProblemProjection = {
   limits: { cpu_time_ms: number; wall_time_ms: number; memory_mb: number };
   statement: { markdown: string; sha256: string; size_bytes: number };
   starter?: { filename: string; source: string; sha256: string; size_bytes: number };
+  /** Published source workspace and in-pack reading material. */
+  multi_file_enabled?: boolean;
+  starter_files?: { path: string; content: string; sha256: string; size_bytes: number }[];
+  reference_docs?: { path: string; content: string; sha256: string; size_bytes: number }[];
+  entrypoint?: string;
+  compilation_units?: string[];
   samples: { label?: string; input: string; output: string }[];
   families: ProblemFamilies;
   /** Images the statement embeds, as metadata only. The bytes are fetched
@@ -583,6 +589,9 @@ export type ContestIndex = {
 export type Draft = {
   problem_label: string;
   source: string;
+  source_files?: { path: string; content: string }[] | null;
+  entrypoint?: string | null;
+  compilation_units?: string[] | null;
   language: string;
   client_revision: number;
   updated_at: string;
@@ -886,12 +895,30 @@ export async function listDrafts(sessionUid: string): Promise<Draft[]> {
 export async function saveDraft(
   sessionUid: string,
   label: string,
-  draft: { source: string; language: string; clientRevision: number }
+  draft: {
+    source: string;
+    language: string;
+    clientRevision: number;
+    sourceFiles?: { path: string; content: string }[];
+    entrypoint?: string;
+    compilationUnits?: string[];
+  }
 ): Promise<Draft> {
   return request<Draft>(
     "PUT",
     `/participant/sessions/${encodeURIComponent(sessionUid)}/drafts/${encodeURIComponent(label)}`,
-    { source: draft.source, language: draft.language, client_revision: draft.clientRevision },
+    {
+      ...(draft.sourceFiles ? {} : { source: draft.source }),
+      language: draft.language,
+      client_revision: draft.clientRevision,
+      ...(draft.sourceFiles
+        ? {
+            source_files: draft.sourceFiles,
+            entrypoint: draft.entrypoint,
+            compilation_units: draft.compilationUnits,
+          }
+        : {}),
+    },
     8_000
   );
 }
@@ -914,7 +941,10 @@ export async function run(
   input: {
     problemLabel: string;
     language: string;
-    source: string;
+    source?: string;
+    sourceFiles?: { path: string; content: string }[];
+    entrypoint?: string;
+    compilationUnits?: string[];
     customCases?: CustomCase[] | null;
   }
 ): Promise<SubmissionResult> {
@@ -924,7 +954,14 @@ export async function run(
     {
       problem_label: input.problemLabel,
       language: input.language,
-      source: input.source,
+      ...(input.sourceFiles ? {} : { source: input.source }),
+      ...(input.sourceFiles
+        ? {
+            source_files: input.sourceFiles,
+            entrypoint: input.entrypoint,
+            compilation_units: input.compilationUnits,
+          }
+        : {}),
       // Omitted entirely when absent: the API reads a present key as "run
       // only these", and an empty array is refused rather than quietly
       // falling back to the samples.
@@ -957,7 +994,10 @@ export async function submit(
   input: {
     problemLabel: string;
     language: string;
-    source: string;
+    source?: string;
+    sourceFiles?: { path: string; content: string }[];
+    entrypoint?: string;
+    compilationUnits?: string[];
     idempotencyKey?: string;
   }
 ): Promise<SubmissionResult> {
@@ -967,7 +1007,14 @@ export async function submit(
     {
       problem_label: input.problemLabel,
       language: input.language,
-      source: input.source,
+      ...(input.sourceFiles ? {} : { source: input.source }),
+      ...(input.sourceFiles
+        ? {
+            source_files: input.sourceFiles,
+            entrypoint: input.entrypoint,
+            compilation_units: input.compilationUnits,
+          }
+        : {}),
       ...(input.idempotencyKey ? { idempotency_key: input.idempotencyKey } : {}),
     }
   );

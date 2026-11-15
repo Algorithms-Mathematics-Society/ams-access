@@ -1,8 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-const ui = readFileSync(new URL("./components/TeamVoiceControls.tsx", import.meta.url), "utf8");
-const client = readFileSync(new URL("./client.tsx", import.meta.url), "utf8");
+const ui = readFileSync(
+  new URL("./components/TeamVoiceControls.tsx", import.meta.url),
+  "utf8"
+).replaceAll("\r\n", "\n");
+const client = readFileSync(new URL("./client.tsx", import.meta.url), "utf8").replaceAll(
+  "\r\n",
+  "\n"
+);
 test("Desktop adapter retains lifecycle boundaries and mandatory overlay priority", () => {
   assert.match(
     ui.replace(/\s+/g, " "),
@@ -33,7 +39,11 @@ test("missing WebRTC blocks connection before session creation or microphone cap
   let microphones = 0;
   const messages = [];
   const run = new Function(
+    "suspendedRef",
     "supportsRtc",
+    "linuxNative",
+    "nativeProbe",
+    "connectPending",
     "current",
     "lifecycleAbort",
     "open",
@@ -43,7 +53,11 @@ test("missing WebRTC blocks connection before session creation or microphone cap
     `return (async function () { ${body} })();`
   );
   await run(
+    { current: false },
     false,
+    false,
+    { current: null },
+    { current: false },
     { current: () => true },
     { current: {} },
     { current: true },
@@ -60,7 +74,19 @@ test("missing WebRTC blocks connection before session creation or microphone cap
   assert.deepEqual(messages, [
     "Team voice is unavailable in this app. Ask your organizer for a supported app build or device.",
   ]);
-  assert.match(ui, /const supportsRtc = typeof RTCPeerConnection === "function"/);
+  assert.match(
+    ui,
+    /const supportsRtc = linuxNative \? nativeSupported : typeof RTCPeerConnection === "function"/
+  );
+  assert.match(
+    ui,
+    /linuxNative \? await \(nativeProbe\.current \?\? probeLinuxVoice\(\)\) : supportsRtc/
+  );
+  assert.match(
+    ui.replace(/\s+/g, " "),
+    /acquireMicrophone: linuxNative \? undefined : \(\) => acquireVoiceMicrophone/
+  );
+  assert.match(ui, /nativeVoice: linuxNative \? createLinuxVoiceBackend : undefined/);
   assert.match(ui, /!supportsRtc\s*\? "Voice unavailable in this app"/);
   assert.match(ui, /isDisabled=\{!supportsRtc \|\| busy \|\| !voiceOpen \|\| suspended\}/);
   assert.match(
@@ -68,6 +94,65 @@ test("missing WebRTC blocks connection before session creation or microphone cap
     /Ask your organizer for a supported app build or device\. You can continue with team parts/
   );
   assert.match(ui, /isDisabled=\{!supportsRtc \|\| busy \|\| !voiceOpen \|\| suspended\}/);
+});
+
+test("Windows output enumeration failure leaves connected voice usable", async () => {
+  const body = ui
+    .match(/async function connect\(\) \{([\s\S]*?)\n  \}\n\n  connectCurrent/)[1]
+    .replaceAll("lifecycle!", "lifecycle");
+  const messages = [];
+  const outputs = [];
+  const active = {
+    async start() {},
+    stop() {},
+    getSnapshot: () => ({ status: "connected", muted: true }),
+    subscribe: () => () => {},
+  };
+  const scope = {
+    suspendedRef: { current: false },
+    current: { current: () => true },
+    lifecycleAbort: { current: { signal: {} } },
+    open: { current: true },
+    connectPending: { current: false },
+    linuxNative: false,
+    nativeProbe: { current: null },
+    supportsRtc: true,
+    setMessage: (value) => messages.push(value),
+    setNativeSupported() {},
+    autoJoin: { current: { take() {} } },
+    unsubscribeSession: { current: null },
+    session: { current: null },
+    createTeamVoiceSession: () => active,
+    contestUid: "contest",
+    resolveApiBase: () => "https://api.test",
+    participantToken: () => "token",
+    acquireVoiceMicrophone() {},
+    cameraSession: { current: () => null },
+    createLinuxVoiceBackend() {},
+    readVoiceCredentials() {},
+    authHeaders() {},
+    setSnapshot() {},
+    setOutputs: (value) => outputs.push(value),
+    HTMLMediaElement: { prototype: { setSinkId() {} } },
+    navigator: {
+      mediaDevices: {
+        async enumerateDevices() {
+          throw new Error("denied");
+        },
+      },
+    },
+  };
+  const connect = new Function(...Object.keys(scope), `return async function() { ${body} };`)(
+    ...Object.values(scope)
+  );
+  await connect();
+  assert.equal(scope.session.current, active);
+  assert.equal(active.getSnapshot().status, "connected");
+  assert.deepEqual(messages, [null]);
+  assert.deepEqual(outputs, [[]]);
+  assert.equal(scope.connectPending.current, false);
+  assert.match(ui, /snapshot\?\.error === "Allow audio playback to hear your team\."/);
+  assert.match(ui, /retryPlayback\(\)\s*\.then\(\(\) => setMessage\(null\)\)/);
 });
 
 test("team paper load never gates on a team status and fails closed without a label", () => {
@@ -183,6 +268,9 @@ test("mute shortcut captures before editor, consumes repeats and respects lifecy
     "session",
     "suspended",
     "current",
+    "compact",
+    "toolbarTarget",
+    "lobbyTarget",
     `return function(event) { ${source} };`
   );
   assert.match(ui, /addEventListener\("keydown", muteShortcut, true\)/);
@@ -199,7 +287,13 @@ test("mute shortcut captures before editor, consumes repeats and respects lifecy
       },
     },
   };
-  function dispatch(overrides = {}, suspended = false, valid = true, active = session) {
+  function dispatch(
+    overrides = {},
+    suspended = false,
+    valid = true,
+    active = session,
+    visible = true
+  ) {
     let prevented = false,
       stopped = false,
       editorCommands = 0;
@@ -218,7 +312,7 @@ test("mute shortcut captures before editor, consumes repeats and respects lifecy
       },
       ...overrides,
     };
-    handler(active, suspended, { current: () => valid })(event);
+    handler(active, suspended, { current: () => valid }, true, visible ? {} : null, null)(event);
     // A target editor receives only events not stopped by the window capture handler.
     if (!stopped) editorCommands++;
     return { prevented, stopped, editorCommands };
@@ -236,7 +330,8 @@ test("mute shortcut captures before editor, consumes repeats and respects lifecy
   assert.equal(dispatch({ key: "M", code: "Semicolon" }).prevented, true);
   assert.equal(dispatch({ key: "Ь", code: "KeyM" }).prevented, true);
   assert.equal(toggles, 3);
-  // Consumed but inert until the Live/Muted control is visible.
+  assert.equal(dispatch({}, false, true, session, false).prevented, false);
+  assert.equal(toggles, 3, "a hidden microphone cannot be toggled by the shortcut");
   status = "connecting";
   assert.equal(dispatch().prevented, true);
   assert.equal(toggles, 3, "connecting must remain muted");
@@ -319,4 +414,79 @@ test("reopening the voice window updates rendered Join state without another pol
   assert.deepEqual(resumeStates, [false]);
   assert.equal(open.current, true);
   assert.match(ui, /connected \|\| busy \|\| resumePending/);
+});
+
+test("joining requires explicit confirmation and yields to mandatory overlays", () => {
+  assert.doesNotMatch(ui, /autoJoin/);
+  assert.match(ui, /else if \(resumeAfterPoll.current\)/);
+  assert.match(ui, /onRequestJoin=\{\(\) => setConfirmJoin\(true\)\}/);
+  const handler = ui.match(
+    /label="Confirm join voice"[\s\S]*?onClick=\{\(\) => \{([\s\S]*?)\}\}/
+  )[1];
+  let connects = 0;
+  const updates = [];
+  const run = new Function("suspendedRef", "setConfirmJoin", "connect", handler);
+  run(
+    { current: true },
+    (value) => updates.push(value),
+    () => connects++
+  );
+  assert.equal(connects, 0);
+  assert.deepEqual(updates, []);
+  run(
+    { current: false },
+    (value) => updates.push(value),
+    () => connects++
+  );
+  assert.equal(connects, 1);
+  assert.deepEqual(updates, [false]);
+  assert.match(ui, /if \(suspended\) setConfirmJoin\(false\)/);
+  assert.match(ui, /!authorized\(\) \|\| !open.current \|\| suspendedRef.current/);
+});
+
+test("lobby join confirmation owns Escape only while active and yields when suspended", () => {
+  const body = ui.match(
+    /useEffect\(\(\) => \{\n    if \(!confirmJoin \|\| compact \|\| suspended\) return;([\s\S]*?)\n  \}, \[confirmJoin, compact, suspended\]\);/
+  )[1];
+  let listener;
+  let released = 0;
+  const updates = [];
+  const suspendedRef = { current: false };
+  const run = new Function(
+    "acquireOrdinaryEscape",
+    "window",
+    "suspendedRef",
+    "setConfirmJoin",
+    body.replace(": KeyboardEvent", "")
+  );
+  const cleanup = run(
+    () => () => released++,
+    {
+      addEventListener(_name, callback) {
+        listener = callback;
+      },
+      removeEventListener() {
+        listener = null;
+      },
+    },
+    suspendedRef,
+    (value) => updates.push(value)
+  );
+  let prevented = 0;
+  const event = {
+    key: "Escape",
+    preventDefault() {
+      prevented++;
+    },
+  };
+  suspendedRef.current = true;
+  listener(event);
+  assert.deepEqual(updates, []);
+  suspendedRef.current = false;
+  listener(event);
+  assert.deepEqual(updates, [false]);
+  assert.equal(prevented, 1);
+  cleanup();
+  assert.equal(listener, null);
+  assert.equal(released, 1);
 });

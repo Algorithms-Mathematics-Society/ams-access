@@ -4,6 +4,11 @@ import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Heading } from "@astryxdesign/core/Heading";
 import { Token } from "@astryxdesign/core/Token";
 import { Text } from "@astryxdesign/core/Text";
+import { Mic, MicOff, CircleHelp, AudioLines, UserRoundX } from "lucide-react";
+import { Tooltip } from "@astryxdesign/core/Tooltip";
+import { Slider } from "@astryxdesign/core/Slider";
+import { voiceMemberRows } from "@/lib/team-voice-members";
+import type { TeamVoiceSnapshot } from "@/lib/team-voice-engine";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { Button } from "@astryxdesign/core/Button";
 import { countdownMs, type LobbyState } from "@/lib/team-lobby";
@@ -20,6 +25,7 @@ export function TeamLobby({
   contestUid,
   onClaim,
   onRelease,
+  onReady,
   onEnter,
   canEnter = true,
   actions,
@@ -29,6 +35,7 @@ export function TeamLobby({
   contestUid: string;
   onClaim: (label: string) => void;
   onRelease: () => void;
+  onReady: () => void;
   onEnter: () => void;
   canEnter?: boolean;
   actions?: ReactNode;
@@ -67,6 +74,21 @@ export function TeamLobby({
     });
   }, [contestUid, scheduleAttempt, hasBoard, hasProjectedStart]);
   const board = state.board;
+  const own = board?.parts.find((p) => p.holder_is_me);
+  const startRemaining = board
+    ? contestStartRemaining(startsAt, board, state.sampledAt, now)
+    : null;
+  const scheduleReady = hasProjectedStart || startConfirmed;
+  const enterReady = Boolean(
+    canEnter &&
+    state.status === "team" &&
+    !state.pending &&
+    own &&
+    board?.phase.name === "locked" &&
+    board.allocation.locked &&
+    scheduleReady &&
+    startRemaining === 0
+  );
   if (!board)
     return (
       <VStack gap={4} style={{ minWidth: 0, overflowWrap: "anywhere" }}>
@@ -89,18 +111,16 @@ export function TeamLobby({
   const remaining = countdownMs(board, state.sampledAt, now);
   const clock = remaining === null ? null : duration(remaining);
   const phase = board.phase.name;
-  const startRemaining = contestStartRemaining(startsAt, board, state.sampledAt, now);
-  const scheduleReady = hasProjectedStart || startConfirmed;
   const choosing =
     canEnter &&
     state.status === "team" &&
     phase === "choosing" &&
     !board.allocation.locked &&
     remaining !== 0;
-  const own = board.parts.find((p) => p.holder_is_me);
+  const supportsReadiness = board.readiness_supported === true;
   return (
     <VStack
-      gap={4}
+      gap={2}
       className="team-lobby-content"
       style={{ minWidth: 0, overflowWrap: "anywhere" }}
     >
@@ -129,6 +149,37 @@ export function TeamLobby({
         )}
       </VStack>
       <VStack ref={voiceTargetRef} gap={0} className="team-lobby-voice" />
+      {phase === "choosing" && supportsReadiness && (
+        <VStack gap={1} className="team-lobby-readiness">
+          <HStack gap={3} align="center" justify="between">
+            <Text role="status">
+              {board.readiness?.ready} of {board.readiness?.needed} members ready
+            </Text>
+            <Button
+              variant="primary"
+              label="Ready"
+              isDisabled={
+                !choosing ||
+                !own ||
+                state.pending ||
+                !board.readiness?.can_ready ||
+                board.readiness.mine
+              }
+              onClick={() => {
+                setPendingAction("Marking you ready…");
+                onReady();
+              }}
+            />
+          </HStack>
+          <Text type="supporting">
+            Choose a part, then mark Ready. Changing parts clears readiness.
+            {board.allocation.locks_at
+              ? " Parts lock when everyone is ready or the timer ends; unclaimed parts are assigned."
+              : " Parts lock when everyone is ready."}
+            {" Click Ready after parts lock to enter your workspace."}
+          </Text>
+        </VStack>
+      )}
       {phase === "locked" && (
         <VStack gap={2}>
           <Text>
@@ -136,18 +187,14 @@ export function TeamLobby({
               ? `Your assigned part is ${own.label} (${own.problem_label}).`
               : "Waiting for your server-confirmed assignment."}
           </Text>
+          <Text>Click Ready to enter your workspace when the contest starts.</Text>
           <Button
             variant="primary"
-            isDisabled={
-              !scheduleReady ||
-              startRemaining !== 0 ||
-              !canEnter ||
-              !own ||
-              !board.allocation.locked ||
-              state.status !== "team"
-            }
-            onClick={onEnter}
-            label="Go to your part"
+            isDisabled={!enterReady}
+            onClick={() => {
+              if (enterReady) onEnter();
+            }}
+            label="Ready"
           />
           {startRemaining !== null && startRemaining > 0 && (
             <Text>Contest starts in {duration(startRemaining)}</Text>
@@ -168,30 +215,34 @@ export function TeamLobby({
           )}
         </VStack>
       )}
-      {state.error && <Text role="alert">{state.error}</Text>}
-      {state.pending && <Text role="status">{pendingAction ?? "Updating your part…"}</Text>}
+      <VStack gap={0} className="team-lobby-feedback">
+        {state.error && <Text role="alert">{state.error}</Text>}
+        {state.pending && <Text role="status">{pendingAction ?? "Updating your part…"}</Text>}
+      </VStack>
       <List density="compact" hasDividers header={<Heading level={2}>Parts</Heading>}>
         {board.parts.map((part) => (
           <ListItem
             key={part.label}
             className="team-lobby-part"
-            label={`Part ${part.label} · ${part.problem_label}`}
+            label={`Part ${part.label} · ${part.title || part.problem_label}`}
             description={
-              part.title || part.summary ? (
-                <VStack gap={1} style={{ minWidth: 0, overflowWrap: "anywhere" }}>
-                  {part.title && <Heading level={3}>{part.title}</Heading>}
-                  {part.summary && <Text>{part.summary}</Text>}
-                  <Text>
-                    {part.holder
-                      ? `${part.holder}${part.holder_is_me ? " (you)" : ""}`
-                      : "Available"}
-                  </Text>
-                </VStack>
-              ) : (
-                <Text>
+              <HStack
+                gap={2}
+                wrap="wrap"
+                align="start"
+                style={{ minWidth: 0, overflowWrap: "anywhere" }}
+              >
+                <Text type="supporting">
                   {part.holder ? `${part.holder}${part.holder_is_me ? " (you)" : ""}` : "Available"}
                 </Text>
-              )
+                {(part.summary || (part.title && part.title !== part.problem_label)) && (
+                  <details className="team-lobby-part-summary">
+                    <summary>Details</summary>
+                    {part.title && <Text type="supporting">{part.problem_label}</Text>}
+                    {part.summary && <Text type="supporting">{part.summary}</Text>}
+                  </details>
+                )}
+              </HStack>
             }
             endContent={
               part.holder_is_me ? (
@@ -214,7 +265,7 @@ export function TeamLobby({
                     onClaim(part.label);
                   }}
                   aria-label={`Claim part ${part.label}`}
-                  label={phase === "discussion" && remaining !== 0 ? `Opens in ${clock}` : "Claim"}
+                  label="Claim"
                 />
               )
             }
@@ -226,7 +277,15 @@ export function TeamLobby({
 }
 
 /** One assignment roster in the shell's right column, below its stable camera. */
-export function TeamLobbyMembers({ state }: { state: LobbyState }) {
+export function TeamLobbyMembers({
+  state,
+  snapshot = null,
+  onVolume,
+}: {
+  state: LobbyState;
+  snapshot?: TeamVoiceSnapshot | null;
+  onVolume?: (uid: string, volume: number) => void;
+}) {
   if (!state.board) return null;
   return (
     <VStack
@@ -237,14 +296,50 @@ export function TeamLobbyMembers({ state }: { state: LobbyState }) {
       style={{ minWidth: 0, overflowWrap: "anywhere" }}
     >
       <List density="compact" hasDividers header={<Heading level={2}>Members</Heading>}>
-        {state.board.members.map((member, index) => (
+        {voiceMemberRows(state.board, snapshot).map(({ member, key, peer, status }) => (
           <ListItem
-            key={member.member_uid ?? index}
+            key={key}
             label={`${member.display_name}${member.is_me ? " (you)" : ""}`}
             description={
               <Text>{member.part_label ? `Part ${member.part_label}` : "No part selected"}</Text>
             }
-            endContent={member.assigned_by === "auto" ? <Token label="Auto-assigned" /> : undefined}
+            endContent={
+              <HStack gap={2} align="center">
+                <Tooltip content={status} focusTrigger="always">
+                  <Text as="span" aria-label={`${member.display_name}: ${status}`}>
+                    {status === "muted" ? (
+                      <MicOff size={14} aria-hidden="true" />
+                    ) : status === "speaking" ? (
+                      <AudioLines size={14} aria-hidden="true" />
+                    ) : status === "not in voice" ? (
+                      <UserRoundX size={14} aria-hidden="true" />
+                    ) : status === "voice status unavailable" ? (
+                      <CircleHelp size={14} aria-hidden="true" />
+                    ) : (
+                      <Mic size={14} aria-hidden="true" />
+                    )}
+                  </Text>
+                </Tooltip>
+                {peer && onVolume && (
+                  <Slider
+                    label={`${member.display_name} volume`}
+                    isLabelHidden
+                    valueDisplay="none"
+                    value={peer.volume * 100}
+                    min={0}
+                    max={100}
+                    style={{ width: "var(--spacing-16)" }}
+                    onChange={(value: number) => onVolume(peer.memberUid, value / 100)}
+                  />
+                )}
+                {state.board?.readiness_supported === true &&
+                state.board.phase.name === "choosing" ? (
+                  <Token label={member.ready ? "Ready" : "Not ready"} />
+                ) : member.assigned_by === "auto" ? (
+                  <Token label="Auto-assigned" />
+                ) : null}
+              </HStack>
+            }
           />
         ))}
       </List>
