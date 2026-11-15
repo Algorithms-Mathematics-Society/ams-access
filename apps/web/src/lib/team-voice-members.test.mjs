@@ -40,13 +40,13 @@ test("peer leaves, mutes or stops speaking without duplicated rows", () => {
 test("legacy IDs and disconnected signaling do not invent remote presence", () => {
   const legacy = { members: team.members.map(({ member_uid, ...member }) => member) };
   assert.equal(voiceMemberRows(legacy, snapshot)[1].status, "voice status unavailable");
-  for (const state of [
-    null,
-    { ...snapshot, status: "reconnecting" },
-    { ...snapshot, status: "closed" },
+  for (const [state, status] of [
+    [null, "join voice to see"],
+    [{ ...snapshot, status: "reconnecting" }, "connecting…"],
+    [{ ...snapshot, status: "closed" }, "voice ended"],
   ]) {
     const rows = voiceMemberRows(team, state);
-    assert.equal(rows[1].status, "voice status unavailable");
+    assert.equal(rows[1].status, status);
     assert.equal(rows[1].peer, undefined);
   }
 });

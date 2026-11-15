@@ -112,7 +112,7 @@ export function readAnnouncements(value: unknown): Announcement[] {
 export function rememberAck(
   store: KeyValueStore,
   sessionId: string,
-  announcementUid: string,
+  announcementUid: string
 ): void {
   try {
     store.setItem(ackKey(sessionId, announcementUid), String(Date.now()));
@@ -127,7 +127,7 @@ export function rememberAck(
 export function wasAcked(
   store: KeyValueStore,
   sessionId: string,
-  announcementUid: string,
+  announcementUid: string
 ): boolean {
   try {
     return store.getItem(ackKey(sessionId, announcementUid)) !== null;
@@ -150,7 +150,7 @@ export function wasAcked(
 export function nextToShow(
   announcements: Announcement[],
   store: KeyValueStore,
-  sessionId: string,
+  sessionId: string
 ): Announcement | null {
   const pending = announcements
     .filter((row) => !row.acknowledged && !wasAcked(store, sessionId, row.uid))

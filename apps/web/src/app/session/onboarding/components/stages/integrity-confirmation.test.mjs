@@ -245,7 +245,14 @@ test("Mac advisory review preserves the exact warning without claiming entry is 
   assert.match(text(summary.props.description), /entry requirements are checked/);
   assert.ok(tree.some((node) => text(node) === detail));
   assert.ok(tree.some((node) => node.type === "Button" && node.props.label === "Continue"));
-  const repaired = render({ platform: "macos", results: { 1: "pass" }, warningDetails: { 1: detail } });
+  const repaired = render({
+    platform: "macos",
+    results: { 1: "pass" },
+    warningDetails: { 1: detail },
+  });
   assert.ok(!repaired.some((node) => text(node) === detail));
-  assert.equal(repaired.find((node) => node.type === "Banner").props.title, "Your setup checks passed");
+  assert.equal(
+    repaired.find((node) => node.type === "Banner").props.title,
+    "Your setup checks passed"
+  );
 });

@@ -110,6 +110,7 @@ export function TeamVoiceControls({
   const open = useRef(false);
   const lifecycleAbort = useRef<AbortController | null>(null);
   const resumeAfterPoll = useRef(false);
+  // Render-visible mirrors: ref writes alone never re-render Join/Leave.
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [resumePending, setResumePending] = useState(false);
   const connectCurrent = useRef<() => Promise<void>>(async () => {});
@@ -246,14 +247,25 @@ export function TeamVoiceControls({
       nativeVoice: linuxNative ? createLinuxVoiceBackend : undefined,
       refreshCredentials: async () => {
         if (!authorized()) throw new Error("Voice session ended");
-        const credentials = await readVoiceCredentials(
-          resolveApiBase(),
-          contestUid,
-          authHeaders(),
-          AbortSignal.any([lifecycle!.signal, AbortSignal.timeout(8_000)])
-        );
-        if (!authorized()) throw new Error("Voice session ended");
-        return credentials;
+        // No AbortSignal.any/timeout: macOS 12 WebKit can predate both.
+        const request = new AbortController();
+        const abort = () => request.abort();
+        const deadline = setTimeout(abort, 8_000);
+        lifecycle!.signal.addEventListener("abort", abort);
+        if (lifecycle!.signal.aborted) abort();
+        try {
+          const credentials = await readVoiceCredentials(
+            resolveApiBase(),
+            contestUid,
+            authHeaders(),
+            request.signal
+          );
+          if (!authorized()) throw new Error("Voice session ended");
+          return credentials;
+        } finally {
+          clearTimeout(deadline);
+          lifecycle!.signal.removeEventListener("abort", abort);
+        }
       },
     });
     session.current = active;
@@ -316,6 +328,7 @@ export function TeamVoiceControls({
       ) {
         event.preventDefault();
         event.stopPropagation();
+        // Never unmute before the Live/Muted control is visible.
         const { status, muted } = active.getSnapshot();
         if (!event.repeat && (status === "connected" || status === "reconnecting"))
           active.setMuted(!muted);
@@ -373,6 +386,7 @@ export function TeamVoiceControls({
           padding={4}
           as="section"
           aria-label="Team voice"
+          // inert alone is ignored before WebKit 15.5 (macOS 12); disable controls too.
           inert={suspended || undefined}
           style={{
             background: "var(--color-background-surface)",
@@ -432,11 +446,13 @@ export function TeamVoiceControls({
                     ? "var(--color-text-secondary)"
                     : "var(--color-text-green)",
                 }}
+                isDisabled={suspended}
                 onClick={toggleMute}
               />
             )}
             {(connected || busy || resumePending) && (
               <LeaveTeamVoice
+                isDisabled={suspended}
                 onLeave={() => {
                   resumeAfterPoll.current = false;
                   setResumePending(false);
@@ -454,6 +470,7 @@ export function TeamVoiceControls({
               !linuxNative && (
                 <Button
                   label="Retry audio playback"
+                  isDisabled={suspended}
                   onClick={() =>
                     void session.current
                       ?.retryPlayback()
@@ -506,6 +523,7 @@ export function TeamVoiceControls({
                 <Button
                   label="Enable microphone meter"
                   variant="secondary"
+                  isDisabled={suspended}
                   onClick={() => void session.current?.retryPlayback().catch(() => {})}
                 />
               )}
@@ -531,6 +549,7 @@ export function TeamVoiceControls({
                             min={0}
                             max={100}
                             formatValue={(value) => `${value}%`}
+                            isDisabled={suspended}
                             onChange={(value: number) =>
                               session.current?.setMemberVolume(peer.memberUid, value / 100)
                             }
@@ -554,6 +573,7 @@ export function TeamVoiceControls({
               {outputs.length > 0 && (
                 <Selector
                   label="Team voice output"
+                  isDisabled={suspended}
                   value={snapshot?.outputDevice || "default"}
                   options={[
                     { value: "default", label: "System default" },

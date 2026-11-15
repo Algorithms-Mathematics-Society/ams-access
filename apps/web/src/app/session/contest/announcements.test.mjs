@@ -100,7 +100,7 @@ test("a list drops only the bad rows, and is bounded", () => {
   const rows = [announcement({ uid: "a" }), { junk: true }, announcement({ uid: "b" })];
   assert.deepEqual(
     readAnnouncements(rows).map((r) => r.uid),
-    ["a", "b"],
+    ["a", "b"]
   );
   assert.deepEqual(readAnnouncements("not a list"), []);
 

@@ -335,9 +335,14 @@ test("sign-in button shows and honors the server cooldown", () => {
 test("typed spaces are blocked without intercepting paste or navigation shortcuts", () => {
   const input = all(formHarness()()).find((n) => n.props?.id === "login-id");
   let prevented = 0;
-  const press = (key, modifiers = {}) => input.props.onKeyDown({
-    key, ...modifiers, preventDefault() { prevented++; },
-  });
+  const press = (key, modifiers = {}) =>
+    input.props.onKeyDown({
+      key,
+      ...modifiers,
+      preventDefault() {
+        prevented++;
+      },
+    });
   press(" ");
   assert.equal(prevented, 1);
   press("v", { ctrlKey: true });

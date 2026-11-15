@@ -16,11 +16,15 @@ export function prepareLinuxVoice({
 
   const manifest = path.join(repoRoot, "packages/linux-voice-worker/Cargo.toml");
   const targetDirectory = JSON.parse(
-    runCargo("cargo", ["metadata", "--manifest-path", manifest, "--no-deps", "--format-version", "1", "--locked"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "inherit"],
-    })
+    runCargo(
+      "cargo",
+      ["metadata", "--manifest-path", manifest, "--no-deps", "--format-version", "1", "--locked"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "inherit"],
+      }
+    )
   ).target_directory;
   if (typeof targetDirectory !== "string" || !path.isAbsolute(targetDirectory)) {
     throw new Error("Linux voice Cargo metadata did not return an absolute target_directory");

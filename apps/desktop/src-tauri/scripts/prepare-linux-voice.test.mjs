@@ -22,10 +22,24 @@ test("builds the independent locked workspace and stages its configured target",
         writeFileSync(binary, "fresh binary");
       },
     });
-    assert.deepEqual(calls.map(({ command, args }) => [command, args]), [
-      ["cargo", ["metadata", "--manifest-path", manifest, "--no-deps", "--format-version", "1", "--locked"]],
-      ["cargo", ["build", "--manifest-path", manifest, "--locked", "--release"]],
-    ]);
+    assert.deepEqual(
+      calls.map(({ command, args }) => [command, args]),
+      [
+        [
+          "cargo",
+          [
+            "metadata",
+            "--manifest-path",
+            manifest,
+            "--no-deps",
+            "--format-version",
+            "1",
+            "--locked",
+          ],
+        ],
+        ["cargo", ["build", "--manifest-path", manifest, "--locked", "--release"]],
+      ]
+    );
     assert.equal(calls[0].options.cwd, root);
     assert.equal(calls[0].options.env, undefined);
     assert.equal(calls[1].options.cwd, root);
@@ -39,20 +53,33 @@ test("builds the independent locked workspace and stages its configured target",
 
 test("does no work on Windows or macOS", () => {
   for (const platform of ["win32", "darwin"]) {
-    assert.equal(prepareLinuxVoice({ platform, runCargo() { throw new Error("cargo called"); } }), null);
+    assert.equal(
+      prepareLinuxVoice({
+        platform,
+        runCargo() {
+          throw new Error("cargo called");
+        },
+      }),
+      null
+    );
   }
 });
 
 test("does not stage a stale binary when build output is missing", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "ams-voice-prep-"));
   try {
-    assert.throws(() => prepareLinuxVoice({
-      repoRoot: root,
-      platform: "linux",
-      runCargo(_command, args) {
-        if (args[0] === "metadata") return JSON.stringify({ target_directory: path.join(root, "target") });
-      },
-    }), /did not produce/);
+    assert.throws(
+      () =>
+        prepareLinuxVoice({
+          repoRoot: root,
+          platform: "linux",
+          runCargo(_command, args) {
+            if (args[0] === "metadata")
+              return JSON.stringify({ target_directory: path.join(root, "target") });
+          },
+        }),
+      /did not produce/
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

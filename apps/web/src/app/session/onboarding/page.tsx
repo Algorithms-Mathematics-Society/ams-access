@@ -1254,14 +1254,19 @@ export default function OnboardingPage() {
       // questions, so a postponement/revocation cannot expose an early paper.
       preparedEntryRef.current = { contestId, entered: false };
       attempts.commit(attempt);
-      // Only a fully secured Windows/Linux desktop team entry may reach the precontest room.
+      // Only a fully secured Windows/macOS/Linux desktop team entry may reach the precontest room.
       // A failed team lookup retains the existing setup wait, never grants entry.
       let teamRoom = false;
+      // Not AbortSignal.timeout: macOS 12 WebKit can predate it. A late abort is harmless.
       if (supportsNativeTeamPlatform(nativeAvailable, devicePlatform) && !dryRun) {
         const membership = await attempts.runAdvisory(
           attempt,
           "team lobby availability",
-          () => readVoiceTeam(API_URL, contestId, authHeaders(), AbortSignal.timeout(8_000)),
+          () => {
+            const deadline = new AbortController();
+            setTimeout(() => deadline.abort(), 8_000);
+            return readVoiceTeam(API_URL, contestId, authHeaders(), deadline.signal);
+          },
           9000,
           "team lobby availability timed out"
         );

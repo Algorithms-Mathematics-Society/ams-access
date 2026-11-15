@@ -90,6 +90,7 @@ export function TeamVoicePresentation({
       wrap="wrap"
       style={{ flexShrink: 0, minWidth: 0, maxWidth: "100%" }}
       inert={suspended || undefined}
+      role="group"
       aria-label="Team voice"
     >
       {connected && (
@@ -115,6 +116,7 @@ export function TeamVoicePresentation({
       {snapshot?.peers.map((peer) => (
         <Text
           key={peer.memberUid}
+          role="img"
           aria-label={`${peer.displayName}: ${peer.speaking && !peer.muted ? "speaking" : peer.muted ? "muted" : "in voice"}`}
           style={{
             color:

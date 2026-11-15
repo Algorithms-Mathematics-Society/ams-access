@@ -5,14 +5,16 @@ const ordinaryOwners = new Set<symbol>();
 let nativeWrite = Promise.resolve();
 
 function syncNativeEscape() {
-  nativeWrite = nativeWrite.then(async () => {
-    const blocked = !editorFocused && ordinaryOwners.size === 0;
-    type TauriGlobal = {
-      core: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
-    };
-    const tauri = (window as unknown as { __TAURI__?: TauriGlobal }).__TAURI__;
-    await tauri?.core.invoke("set_escape_blocked", { blocked });
-  }).catch(() => {});
+  nativeWrite = nativeWrite
+    .then(async () => {
+      const blocked = !editorFocused && ordinaryOwners.size === 0;
+      type TauriGlobal = {
+        core: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
+      };
+      const tauri = (window as unknown as { __TAURI__?: TauriGlobal }).__TAURI__;
+      await tauri?.core.invoke("set_escape_blocked", { blocked });
+    })
+    .catch(() => {});
 }
 
 export function setEditorEscapeFocused(focused: boolean) {

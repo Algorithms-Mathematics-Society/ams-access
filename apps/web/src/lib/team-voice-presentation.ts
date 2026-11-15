@@ -27,6 +27,10 @@ export function voiceErrorAdvice(error: string | null): string | null {
       return "Your microphone could not be opened. Check your audio device and try again.";
     case "Allow audio playback to hear your team.":
       return "Audio playback is blocked. Choose Retry audio playback to hear your team.";
+    case "Your sign-in has expired.":
+      return "Your sign-in has expired. Sign in again, then choose Retry voice.";
+    case "Team voice is not available to you.":
+      return "Your account cannot join team voice for this round. Ask a proctor for help.";
     case "A teammate audio connection failed.":
       return "A teammate’s audio connection was interrupted.";
     case "Voice relay credentials could not be renewed.":

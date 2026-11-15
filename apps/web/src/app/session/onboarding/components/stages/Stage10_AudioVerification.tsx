@@ -6,7 +6,7 @@ import { SetupPermissionInfo } from "../SetupPermissionInfo";
 import { VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { ProgressBar } from "@astryxdesign/core/ProgressBar";
-import { invoke, stopMediaStream } from "../../support";
+import { invoke, invokeStrict, stopMediaStream } from "../../support";
 
 export function Stage10_AudioVerification({
   onPass,
@@ -19,6 +19,8 @@ export function Stage10_AudioVerification({
   // permission only takes effect after the app is reopened.
   const [isMac, setIsMac] = useState(false);
   const [missing, setMissing] = useState(false);
+  // macOS: the native wait ended while the system prompt was still open.
+  const [unanswered, setUnanswered] = useState(false);
   const [level, setLevel] = useState(0);
   const [phase, setPhase] = useState<"checking" | "pass" | "fail">("checking");
   const [retryKey, setRetryKey] = useState(0);
@@ -40,6 +42,7 @@ export function Stage10_AudioVerification({
     let passTimer: ReturnType<typeof setTimeout> | null = null;
 
     async function init() {
+      let promptOpen = false;
       try {
         if (!navigator.mediaDevices?.getUserMedia) throw new Error("unavailable");
         // WKWebView needs a native TCC request. Wait for the user's decision;
@@ -47,7 +50,11 @@ export function Stage10_AudioVerification({
         const platform = await invoke<{ os: string }>("get_platform").catch(() => null);
         if (cancelled) return;
         if (platform?.os === "macos") {
-          await invoke("request_macos_microphone_permission");
+          // Strict: the native answer tells denied apart from an unanswered prompt.
+          await invokeStrict("request_macos_microphone_permission").catch((error) => {
+            promptOpen = String(error).includes("unanswered");
+            throw error;
+          });
           if (cancelled) return;
         }
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -93,6 +100,7 @@ export function Stage10_AudioVerification({
       } catch (err) {
         if (cancelled) return;
         setMissing(err instanceof DOMException && err.name === "NotFoundError");
+        setUnanswered(promptOpen);
         // A failed analyser must not keep the microphone open while the
         // candidate reads a persistent warning or decides whether to retry.
         cancelAnimationFrame(rafRef.current);
@@ -149,10 +157,12 @@ export function Stage10_AudioVerification({
             {isMac
               ? missing
                 ? "No microphone was found. Connect a microphone and try again, or continue without it."
-                : "Microphone access is unavailable. Allow microphone access in System Settings and try again, or continue without it."
+                : unanswered
+                  ? "Answer the macOS microphone prompt, then choose Try microphone again."
+                  : "Microphone access is unavailable. Allow microphone access in System Settings and try again, or continue without it."
               : warning}
           </Text>
-          {isMac && !missing && (
+          {isMac && !missing && !unanswered && (
             <Text color="secondary">
               After allowing microphone access, macOS requires AMS Access to be quit and reopened
               before the change takes effect. Relaunch the app, then continue setup.
@@ -168,7 +178,7 @@ export function Stage10_AudioVerification({
                 setRetryKey((key) => key + 1);
               }}
             />
-            {isMac && !missing && (
+            {isMac && !missing && !unanswered && (
               <Button
                 label="Open System Settings"
                 variant="primary"

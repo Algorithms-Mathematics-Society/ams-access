@@ -93,6 +93,7 @@ test("missing WebRTC blocks connection before session creation or microphone cap
     ui,
     /Ask your organizer for a supported app build or device\. You can continue with team parts/
   );
+  assert.match(ui, /isDisabled=\{!supportsRtc \|\| busy \|\| !voiceOpen \|\| suspended\}/);
 });
 
 test("Windows output enumeration failure leaves connected voice usable", async () => {
@@ -243,7 +244,7 @@ test("unsupported native clients probe the round before any paper fetch and bloc
   );
   assert.match(
     load,
-    /if \(nativeTeamUnsupported && teamProbeResult !== "solo" && teamProbeResult !== "defer"\) \{ if \(teamProbeResult === "team"\) \{ setLoadError\( "This is a team round\. Team rounds need the AMS Access app on Windows or Linux\. Contact your organizer\." \); setLoadRetryable\(false\); setLoading\(false\); \} return; \}/
+    /if \(nativeTeamUnsupported && teamProbeResult !== "solo" && teamProbeResult !== "defer"\) \{ if \(teamProbeResult === "team"\) \{ setLoadError\( "This is a team round\. Team rounds need the AMS Access app on Windows, macOS or Linux\. Contact your organizer\." \); setLoadRetryable\(false\); setLoading\(false\); \} return; \}/
   );
 });
 

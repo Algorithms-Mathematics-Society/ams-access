@@ -9,12 +9,35 @@ export type NativeVoiceEvent = {
 };
 
 type NativeRequest =
-  | { op: "peer_create"; session: string; peer: string; ice_servers: RTCIceServer[]; expires_at: number }
+  | {
+      op: "peer_create";
+      session: string;
+      peer: string;
+      ice_servers: RTCIceServer[];
+      expires_at: number;
+    }
   | { op: "peer_close"; session: string; peer: string }
-  | { op: "local_description"; session: string; peer: string; type: "offer" | "answer"; ice_restart?: boolean }
-  | { op: "remote_description"; session: string; peer: string; description: RTCSessionDescriptionInit }
+  | {
+      op: "local_description";
+      session: string;
+      peer: string;
+      type: "offer" | "answer";
+      ice_restart?: boolean;
+    }
+  | {
+      op: "remote_description";
+      session: string;
+      peer: string;
+      description: RTCSessionDescriptionInit;
+    }
   | { op: "ice"; session: string; peer: string; candidate: RTCIceCandidateInit }
-  | { op: "configure"; session: string; peer: string; ice_servers: RTCIceServer[]; expires_at: number }
+  | {
+      op: "configure";
+      session: string;
+      peer: string;
+      ice_servers: RTCIceServer[];
+      expires_at: number;
+    }
   | { op: "mute"; session: string; muted: boolean }
   | { op: "volume"; session: string; peer: string; volume: number }
   | { op: "stats"; session: string; peer: string }
@@ -22,7 +45,12 @@ type NativeRequest =
 
 type Bridge = {
   core: { invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> };
-  event: { listen(name: string, listener: (event: { payload: NativeVoiceEvent }) => void): Promise<() => void> };
+  event: {
+    listen(
+      name: string,
+      listener: (event: { payload: NativeVoiceEvent }) => void
+    ): Promise<() => void>;
+  };
 };
 
 // A fresh backend may start only after the previous helper has acknowledged stop.
@@ -37,7 +65,9 @@ export type NativeVoiceBackend = {
 
 function bridge(): Bridge | null {
   if (typeof window === "undefined") return null;
-  const native = window.__TAURI__ as (typeof window.__TAURI__ & { event?: Bridge["event"] }) | undefined;
+  const native = window.__TAURI__ as
+    | (typeof window.__TAURI__ & { event?: Bridge["event"] })
+    | undefined;
   if (!native?.core?.invoke || !native.event?.listen) return null;
   return native as Bridge;
 }
@@ -46,7 +76,9 @@ export async function probeLinuxVoice(): Promise<boolean> {
   const native = bridge();
   if (!native) return false;
   try {
-    const capability = await native.core.invoke<{ available?: boolean; backend?: string }>("linux_voice_probe");
+    const capability = await native.core.invoke<{ available?: boolean; backend?: string }>(
+      "linux_voice_probe"
+    );
     return capability.available === true && capability.backend === "gstreamer";
   } catch {
     return false;
@@ -67,7 +99,8 @@ export function createLinuxVoiceBackend(): NativeVoiceBackend {
   let heartbeatPending = false;
   const peerEpoch = new Map<string, number>();
   async function call<T>(request: NativeRequest): Promise<T> {
-    if (closed || !session || request.session !== session) throw new Error("Native voice session ended.");
+    if (closed || !session || request.session !== session)
+      throw new Error("Native voice session ended.");
     if (pending >= 32) throw new Error("Native voice queue full.");
     const peer = "peer" in request ? request.peer : null;
     let epoch = peer ? (peerEpoch.get(peer) ?? 0) : 0;
@@ -82,7 +115,10 @@ export function createLinuxVoiceBackend(): NativeVoiceBackend {
         throw new Error("Native voice peer was replaced.");
       return client.core.invoke<T>("linux_voice_call", { request });
     });
-    queue = task.then(() => undefined, () => undefined);
+    queue = task.then(
+      () => undefined,
+      () => undefined
+    );
     try {
       return await task;
     } finally {
@@ -94,7 +130,9 @@ export function createLinuxVoiceBackend(): NativeVoiceBackend {
       if (closed || session) throw new Error("Native voice already started.");
       const previous = nativeTransition;
       let release!: () => void;
-      nativeTransition = new Promise<void>((resolve) => { release = resolve; });
+      nativeTransition = new Promise<void>((resolve) => {
+        release = resolve;
+      });
       try {
         await previous;
         if (closed) throw new Error("Native voice session ended.");
@@ -106,10 +144,14 @@ export function createLinuxVoiceBackend(): NativeVoiceBackend {
         if (closed) throw new Error("Native voice session ended.");
         const result = await native.core.invoke<{ session: string }>("linux_voice_start");
         if (closed) {
-          if (result?.session) await native.core.invoke("linux_voice_stop", { session: result.session }).catch(() => {});
+          if (result?.session)
+            await native.core
+              .invoke("linux_voice_stop", { session: result.session })
+              .catch(() => {});
           throw new Error("Native voice session ended.");
         }
-        if (!result?.session || typeof result.session !== "string") throw new Error("Invalid native voice session.");
+        if (!result?.session || typeof result.session !== "string")
+          throw new Error("Invalid native voice session.");
         session = result.session;
         if (earlyEnd?.session === session) {
           await client.core.invoke("linux_voice_stop", { session }).catch(() => {});
@@ -126,7 +168,9 @@ export function createLinuxVoiceBackend(): NativeVoiceBackend {
               if (!closed && session === current)
                 onEvent({ v: 1, event: "ended", session: current });
             })
-            .finally(() => { heartbeatPending = false; });
+            .finally(() => {
+              heartbeatPending = false;
+            });
         }, 5_000);
         return session;
       } catch (error) {
@@ -150,7 +194,10 @@ export function createLinuxVoiceBackend(): NativeVoiceBackend {
         // Stop immediately so the microphone cannot keep sending while an RPC
         // is stalled. Wait for both the stop acknowledgement and queue drain
         // before a replacement helper starts.
-        const stopped = client.core.invoke("linux_voice_stop", { session: ending }).then(() => {}, () => {});
+        const stopped = client.core.invoke("linux_voice_stop", { session: ending }).then(
+          () => {},
+          () => {}
+        );
         nativeTransition = Promise.all([nativeTransition, queue, stopped]).then(() => {});
       }
     },

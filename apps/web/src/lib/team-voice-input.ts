@@ -1,6 +1,26 @@
+let shared: AudioContext | null = null;
+/**
+ * One context per window. WebKit leaves a context created outside a user gesture
+ * (auto-join, reconnect) suspended, so the next pointer or key press resumes it.
+ */
+function meterContext() {
+  if (shared && shared.state !== "closed") return shared;
+  const context = new AudioContext();
+  shared = context;
+  if (typeof window !== "undefined") {
+    const resume = () => {
+      // WebKit also reports "interrupted" after an audio-session interruption.
+      if (context.state !== "running") void context.resume().catch(() => {});
+    };
+    for (const type of ["pointerdown", "keydown"])
+      window.addEventListener(type, resume, { capture: true, passive: true });
+  }
+  return context;
+}
+
 /** Local-only level meter. This clone is never connected to a speaker or RTCPeerConnection. */
 export function createVoiceInputMeter(stream: MediaStream) {
-  const context = new AudioContext();
+  const context = meterContext();
   let local: MediaStream | null = null;
   try {
     local = new MediaStream(stream.getAudioTracks().map((track) => track.clone()));
@@ -29,12 +49,10 @@ export function createVoiceInputMeter(stream: MediaStream) {
         source.disconnect();
         analyser.disconnect();
         local?.getTracks().forEach((track) => track.stop());
-        void context.close().catch(() => {});
       },
     };
   } catch (error) {
     local?.getTracks().forEach((track) => track.stop());
-    void context.close().catch(() => {});
     throw error;
   }
 }

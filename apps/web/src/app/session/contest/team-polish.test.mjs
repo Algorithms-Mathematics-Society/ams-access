@@ -445,6 +445,8 @@ test("leave confirmation keeps Stay primary and only confirms a deliberate leave
             confirming = value;
           },
         ],
+        useRef: () => ({ current: null }),
+        useEffect: () => {},
       };
     if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
     return { Button: "Button", HStack: "HStack", Text: "Text" };
@@ -658,7 +660,7 @@ test("assignment roster renders once in its own rail with authoritative member a
   assert.equal(presence(liveRows[2]).props["aria-label"], "Waiting member: not in voice");
   liveRows[1].props.endContent.props.children[1].props.onChange(35);
   assert.deepEqual(changes, [["peer", 0.35]]);
-  assert.equal(presence(rows[1]).props["aria-label"], "Same name: voice status unavailable");
+  assert.equal(presence(rows[1]).props["aria-label"], "Same name: join voice to see");
   const main = exports.TeamLobby({
     state,
     contestUid: "contest",

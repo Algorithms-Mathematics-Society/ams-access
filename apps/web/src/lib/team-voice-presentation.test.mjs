@@ -3,7 +3,15 @@ import assert from "node:assert/strict";
 import { voiceErrorAdvice, voiceStatusText } from "./team-voice-presentation.ts";
 
 test("voice statuses explain terminal and connected states", () => {
-  for (const status of ["idle", "connecting", "connected", "reconnecting", "unavailable", "closed", "replaced"]) {
+  for (const status of [
+    "idle",
+    "connecting",
+    "connected",
+    "reconnecting",
+    "unavailable",
+    "closed",
+    "replaced",
+  ]) {
     assert.notEqual(voiceStatusText(status), status);
     assert.ok(voiceStatusText(status));
   }
@@ -11,7 +19,12 @@ test("voice statuses explain terminal and connected states", () => {
 });
 test("only denied microphones get permission advice; unknown engine details stay private", () => {
   assert.match(voiceErrorAdvice("Microphone access was denied."), /system settings/);
-  for (const reason of ["Team voice relay is unavailable.", "Voice relay credentials expired.", "Voice connection could not be restored.", "private backend detail"]) {
+  for (const reason of [
+    "Team voice relay is unavailable.",
+    "Voice relay credentials expired.",
+    "Voice connection could not be restored.",
+    "private backend detail",
+  ]) {
     assert.doesNotMatch(voiceErrorAdvice(reason), /microphone|system settings|private backend/);
     assert.match(voiceErrorAdvice(reason), /Retry voice/);
   }

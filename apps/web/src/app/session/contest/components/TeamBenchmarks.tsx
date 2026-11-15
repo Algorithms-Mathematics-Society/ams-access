@@ -5,6 +5,7 @@ import { Heading } from "@astryxdesign/core/Heading";
 import { Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { List, ListItem } from "@astryxdesign/core/List";
+import { CodeBlock } from "@astryxdesign/core/CodeBlock";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { authGeneration, subscribeAuthChanges } from "@/lib/proctor-api";
 import { resolveApiBase } from "@/lib/api-base";
@@ -13,9 +14,15 @@ import {
   benchmarkStatus,
   benchmarkTrend,
   readBoundedResponse,
+  BENCHMARK_HISTORY_LIMIT,
   type BenchmarkRun,
 } from "@/lib/team-benchmarks";
 const ns = (n: number | null) => (n === null ? "unavailable" : `${n.toLocaleString()} ns`);
+// WKWebView sends <a download href="blob:"> through the navigation guard,
+// which refuses it, so on macOS the folded stacks are shown in the app instead.
+const STACKS_PREVIEW_BYTES = 256 * 1024;
+// navigator.platform, not the user agent: the desktop app sets its own user agent.
+const inAppStacks = () => typeof navigator !== "undefined" && /^Mac/.test(navigator.platform);
 /** Only own-team endpoints; history loads on open/manual refresh, artifacts on demand. */
 export function TeamBenchmarks({
   contestUid,
@@ -30,7 +37,11 @@ export function TeamBenchmarks({
     [loaded, setLoaded] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState<string | null>(null),
-    [profile, setProfile] = useState<{ url: string; revision: number } | null>(null);
+    [profile, setProfile] = useState<{ url: string; revision: number } | null>(null),
+    [stacks, setStacks] = useState<{ text: string; revision: number; truncated: boolean } | null>(
+      null
+    ),
+    [truncated, setTruncated] = useState(false);
   const flight = useRef<AbortController | null>(null),
     objectUrl = useRef<string | null>(null),
     epoch = useRef(0),
@@ -76,16 +87,25 @@ export function TeamBenchmarks({
         );
       const bytes = await readBoundedResponse(
         response,
-        artifact ? 32 * 1024 * 1024 : 2 * 1024 * 1024
+        artifact ? 32 * 1024 * 1024 : 8 * 1024 * 1024
       );
       if (!current()) return;
       if (!artifact) {
-        setRuns(parseBenchmarks(JSON.parse(new TextDecoder().decode(bytes))));
+        const history: unknown = JSON.parse(new TextDecoder().decode(bytes));
+        setRuns(parseBenchmarks(history));
+        setTruncated(Array.isArray(history) && history.length > BENCHMARK_HISTORY_LIMIT);
         setLoaded(true);
       } else {
         const expected = artifact === "flamegraph" ? "image/svg+xml" : "text/plain";
         if (!response.headers.get("content-type")?.toLowerCase().startsWith(expected))
           throw new Error("The profile has an unexpected format.");
+        if (artifact === "stacks" && inAppStacks()) {
+          const truncated = bytes.length > STACKS_PREVIEW_BYTES;
+          let text = new TextDecoder().decode(bytes.subarray(0, STACKS_PREVIEW_BYTES));
+          if (truncated) text = text.slice(0, Math.max(0, text.lastIndexOf("\n")));
+          setStacks({ text, revision: run!.revision, truncated });
+          return;
+        }
         const blob = new Blob([bytes.buffer as ArrayBuffer], { type: expected });
         const url = URL.createObjectURL(blob);
         if (artifact === "flamegraph") {
@@ -136,6 +156,8 @@ export function TeamBenchmarks({
     setLoaded(false);
     setError(null);
     clearProfile();
+    setStacks(null);
+    setTruncated(false);
     if (visible) void request();
     const stop = () => {
       epoch.current++;
@@ -144,10 +166,16 @@ export function TeamBenchmarks({
       setBusy(false);
       setRuns([]);
       setLoaded(false);
+      setTruncated(false);
       clearProfile();
+      setStacks(null);
       clearDownloads();
     };
-    const unsubscribe = subscribeAuthChanges(stop);
+    const unsubscribe = subscribeAuthChanges(() => {
+      stop();
+      // A new sign-in reloads once; request() does nothing when signed out.
+      if (visible) void request();
+    });
     return () => {
       unsubscribe();
       epoch.current++;
@@ -178,6 +206,9 @@ export function TeamBenchmarks({
         count before treating a difference as an improvement.
       </Text>
       {error && <Text role="alert">{error}</Text>}
+      {truncated && (
+        <Text>Showing the newest {BENCHMARK_HISTORY_LIMIT.toLocaleString()} measurements.</Text>
+      )}
       {loaded && !runs.length && (
         <Text>
           No benchmark measurements yet. They appear when benchmarking is enabled and your team has
@@ -285,7 +316,7 @@ export function TeamBenchmarks({
                       onClick={() => void request(run, "flamegraph")}
                     />
                     <Button
-                      label={`Download folded stacks for revision ${run.revision}`}
+                      label={`${inAppStacks() ? "View" : "Download"} folded stacks for revision ${run.revision}`}
                       isDisabled={busy}
                       onClick={() => void request(run, "stacks")}
                     />
@@ -308,6 +339,23 @@ export function TeamBenchmarks({
               clearProfile();
               setError("The flamegraph could not be displayed.");
             }}
+          />
+        </VStack>
+      )}
+      {stacks && (
+        <VStack gap={2}>
+          <Heading level={4}>Folded stacks · revision {stacks.revision}</Heading>
+          <Button label="Close folded stacks" onClick={() => setStacks(null)} />
+          {stacks.truncated && (
+            <Text>Showing the first {STACKS_PREVIEW_BYTES / 1024} KB of the folded stacks.</Text>
+          )}
+          <CodeBlock
+            code={stacks.text}
+            title={`team-revision-${stacks.revision}.folded.txt`}
+            hasCopyButton={false}
+            maxHeight="60vh"
+            width="100%"
+            size="sm"
           />
         </VStack>
       )}

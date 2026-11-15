@@ -77,7 +77,8 @@ test("meter samples local enabled clone without enabling transmitted track, and 
     assert.ok(meter.read() > 0.09);
     meter.stop();
     assert.equal(stopped, 1);
-    assert.equal(closed, 1);
+    // The window's shared context stays open for the next meter.
+    assert.equal(closed, 0);
     assert.equal(disconnected, 2);
   } finally {
     globalThis.AudioContext = previousContext;

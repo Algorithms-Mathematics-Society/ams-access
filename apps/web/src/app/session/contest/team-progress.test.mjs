@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
-import { voteRemainingMs } from "../../../lib/team-vote.ts";
+import { voteRemainingMs, shownIntegration } from "../../../lib/team-vote.ts";
 
 function harness(file, exported) {
   const source = readFileSync(new URL(`./components/${file}.tsx`, import.meta.url), "utf8");
@@ -49,6 +49,7 @@ function harness(file, exported) {
       if (name === "@/lib/team-vote")
         return {
           voteRemainingMs,
+          shownIntegration,
           integrationStatus: () => "Completed",
           integrationPartStatus: () => "Verdict pending",
         };

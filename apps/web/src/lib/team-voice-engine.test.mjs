@@ -42,7 +42,7 @@ function harness(extra = {}) {
     }
     addTrack() {
       return {
-        getParameters: () => ({}),
+        getParameters: () => ({ encodings: [{}] }),
         setParameters: async (p) => {
           this.parameters = p;
         },
@@ -175,17 +175,27 @@ test("native session uses helper media and the same bounded signaling engine", a
   let stops = 0;
   let captures = 0;
   const h = harness({
-    acquireMicrophone: async () => { captures++; throw new Error("browser capture used"); },
+    acquireMicrophone: async () => {
+      captures++;
+      throw new Error("browser capture used");
+    },
     nativeVoice: () => ({
-      async start(listener) { onEvent = listener; return "native-1"; },
-      stop() { stops++; },
+      async start(listener) {
+        onEvent = listener;
+        return "native-1";
+      },
+      stop() {
+        stops++;
+      },
       async call(request) {
         calls.push(request);
         if (request.op === "local_description")
           return { type: request.type, sdp: "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n" };
         return {};
       },
-      async stats() { return 0; },
+      async stats() {
+        return 0;
+      },
     }),
   });
   await h.welcome("z");
@@ -196,11 +206,19 @@ test("native session uses helper media and the same bounded signaling engine", a
   await h.flush();
   await h.tick(100);
   assert.ok(h.sockets[0].sent.some((message) => message.kind === "offer"));
-  h.message({ type: "signal", from: "peer0", kind: "answer", data: {
-    type: "answer", sdp: "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
-  } });
+  h.message({
+    type: "signal",
+    from: "peer0",
+    kind: "answer",
+    data: {
+      type: "answer",
+      sdp: "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
+    },
+  });
   await h.flush();
-  assert.ok(calls.some((call) => call.op === "remote_description" && call.description.type === "answer"));
+  assert.ok(
+    calls.some((call) => call.op === "remote_description" && call.description.type === "answer")
+  );
   h.session.setMuted(false);
   h.session.setVolume(0.4);
   await h.flush();
@@ -214,28 +232,43 @@ test("native unmute waits for helper acknowledgement and failure closes muted", 
   let resolveMute;
   let rejectMute;
   const h = harness({
-    acquireMicrophone: async () => { throw new Error("browser capture used"); },
+    acquireMicrophone: async () => {
+      throw new Error("browser capture used");
+    },
     nativeVoice: () => ({
-      async start() { return "native-mute"; },
+      async start() {
+        return "native-mute";
+      },
       stop() {},
       async call(request) {
         if (request.op === "mute" && request.muted === false)
-          return new Promise((resolve, reject) => { resolveMute = resolve; rejectMute = reject; });
+          return new Promise((resolve, reject) => {
+            resolveMute = resolve;
+            rejectMute = reject;
+          });
         return {};
       },
-      async stats() { return null; },
+      async stats() {
+        return null;
+      },
     }),
   });
   await h.welcome("z", 0);
   h.session.setMuted(false);
   await h.flush();
   assert.equal(h.session.getSnapshot().muted, true);
-  assert.equal(h.sockets[0].sent.some((message) => message.type === "unmute"), false);
+  assert.equal(
+    h.sockets[0].sent.some((message) => message.type === "unmute"),
+    false
+  );
   resolveMute({});
   await h.flush();
   assert.equal(h.session.getSnapshot().muted, false);
   await h.tick(500);
-  assert.equal(h.sockets[0].sent.some((message) => message.type === "unmute"), true);
+  assert.equal(
+    h.sockets[0].sent.some((message) => message.type === "unmute"),
+    true
+  );
   h.session.setMuted(true);
   h.session.setMuted(false);
   await h.flush();
@@ -249,9 +282,14 @@ test("native lower UID answers browser offers and stale peer events are ignored"
   const calls = [];
   let onEvent;
   const h = harness({
-    acquireMicrophone: async () => { throw new Error("browser capture used"); },
+    acquireMicrophone: async () => {
+      throw new Error("browser capture used");
+    },
     nativeVoice: () => ({
-      async start(listener) { onEvent = listener; return "native-low"; },
+      async start(listener) {
+        onEvent = listener;
+        return "native-low";
+      },
       stop() {},
       async call(request) {
         calls.push(request);
@@ -259,16 +297,27 @@ test("native lower UID answers browser offers and stale peer events are ignored"
           return { type: request.type, sdp: "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n" };
         return {};
       },
-      async stats() { return null; },
+      async stats() {
+        return null;
+      },
     }),
   });
   await h.welcome("a");
   onEvent({ v: 1, event: "negotiation", session: "native-low", peer: "peer0" });
   await h.flush();
-  assert.equal(calls.some((call) => call.op === "local_description" && call.type === "offer"), false);
-  h.message({ type: "signal", from: "peer0", kind: "offer", data: {
-    type: "offer", sdp: "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
-  } });
+  assert.equal(
+    calls.some((call) => call.op === "local_description" && call.type === "offer"),
+    false
+  );
+  h.message({
+    type: "signal",
+    from: "peer0",
+    kind: "offer",
+    data: {
+      type: "offer",
+      sdp: "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
+    },
+  });
   await h.flush();
   await h.tick(100);
   assert.ok(calls.some((call) => call.op === "local_description" && call.type === "answer"));
@@ -283,20 +332,35 @@ test("native lower UID answers browser offers and stale peer events are ignored"
 test("native helper receives credentialed TURN URLs from a mixed ICE list", async () => {
   const calls = [];
   const h = harness({
-    acquireMicrophone: async () => { throw new Error("browser capture used"); },
+    acquireMicrophone: async () => {
+      throw new Error("browser capture used");
+    },
     nativeVoice: () => ({
-      async start() { return "native-turn"; },
+      async start() {
+        return "native-turn";
+      },
       stop() {},
-      async call(request) { calls.push(request); return {}; },
-      async stats() { return null; },
+      async call(request) {
+        calls.push(request);
+        return {};
+      },
+      async stats() {
+        return null;
+      },
     }),
   });
   await h.session.start();
   h.message({
-    type: "welcome", me: "z", peers: [{ member_uid: "peer0", display_name: "Peer" }],
+    type: "welcome",
+    me: "z",
+    peers: [{ member_uid: "peer0", display_name: "Peer" }],
     ice_servers: [
       { urls: ["stun:relay.test:3478"] },
-      { urls: ["stun:relay.test:3478", "turn:relay.test:3478", "turns:relay.test:443"], username: "u", credential: "c" },
+      {
+        urls: ["stun:relay.test:3478", "turn:relay.test:3478", "turns:relay.test:443"],
+        username: "u",
+        credential: "c",
+      },
     ],
     expires_at: 3600,
   });
@@ -310,15 +374,23 @@ test("native helper receives credentialed TURN URLs from a mixed ICE list", asyn
 test("native peer close failure ends the helper instead of leaving audio behind", async () => {
   let stops = 0;
   const h = harness({
-    acquireMicrophone: async () => { throw new Error("browser capture used"); },
+    acquireMicrophone: async () => {
+      throw new Error("browser capture used");
+    },
     nativeVoice: () => ({
-      async start() { return "native-close"; },
-      stop() { stops++; },
+      async start() {
+        return "native-close";
+      },
+      stop() {
+        stops++;
+      },
       async call(request) {
         if (request.op === "peer_close") throw new Error("queue rejected");
         return {};
       },
-      async stats() { return null; },
+      async stats() {
+        return null;
+      },
     }),
   });
   await h.welcome("z");
@@ -332,10 +404,17 @@ test("late native start is stopped and never opens signaling", async () => {
   let resolveStart;
   let stops = 0;
   const h = harness({
-    acquireMicrophone: async () => { throw new Error("browser capture used"); },
+    acquireMicrophone: async () => {
+      throw new Error("browser capture used");
+    },
     nativeVoice: () => ({
-      start: () => new Promise((resolve) => { resolveStart = resolve; }),
-      stop: () => { stops++; },
+      start: () =>
+        new Promise((resolve) => {
+          resolveStart = resolve;
+        }),
+      stop: () => {
+        stops++;
+      },
       call: async () => ({}),
       stats: async () => null,
     }),
@@ -352,15 +431,23 @@ test("late native start is stopped and never opens signaling", async () => {
 test("native fatal event during start closes before opening signaling", async () => {
   let stops = 0;
   const h = harness({
-    acquireMicrophone: async () => { throw new Error("browser capture used"); },
+    acquireMicrophone: async () => {
+      throw new Error("browser capture used");
+    },
     nativeVoice: () => ({
       async start(listener) {
         listener({ v: 1, event: "ended", session: "early-native" });
         return "early-native";
       },
-      stop() { stops++; },
-      async call() { return {}; },
-      async stats() { return null; },
+      stop() {
+        stops++;
+      },
+      async call() {
+        return {};
+      },
+      async stats() {
+        return null;
+      },
     }),
   });
   await h.session.start();
@@ -371,12 +458,18 @@ test("native fatal event during start closes before opening signaling", async ()
 });
 
 test("native recovery is bounded and only the higher UID offers", async () => {
-  for (const [uid, expectedOffers] of [["z", 3], ["a", 0]]) {
+  for (const [uid, expectedOffers] of [
+    ["z", 3],
+    ["a", 0],
+  ]) {
     const calls = [];
     let onEvent;
     const h = harness({
       nativeVoice: () => ({
-        async start(listener) { onEvent = listener; return "native"; },
+        async start(listener) {
+          onEvent = listener;
+          return "native";
+        },
         stop() {},
         async call(request) {
           calls.push(request);
@@ -384,23 +477,36 @@ test("native recovery is bounded and only the higher UID offers", async () => {
             return { type: request.type, sdp: "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n" };
           return {};
         },
-        async stats() { return null; },
+        async stats() {
+          return null;
+        },
       }),
-      acquireMicrophone: async () => { throw new Error("browser capture used"); },
+      acquireMicrophone: async () => {
+        throw new Error("browser capture used");
+      },
     });
     await h.welcome(uid);
     onEvent({ v: 1, event: "state", session: "native", peer: "peer0", state: "failed" });
     for (let attempt = 0; attempt < 3; attempt++) {
       await h.flush();
       if (uid === "z") {
-        h.message({ type: "signal", from: "peer0", kind: "answer", data: {
-          type: "answer", sdp: "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
-        } });
+        h.message({
+          type: "signal",
+          from: "peer0",
+          kind: "answer",
+          data: {
+            type: "answer",
+            sdp: "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
+          },
+        });
         await h.flush();
       }
       await h.tick(15_000);
     }
-    assert.equal(calls.filter((call) => call.op === "local_description" && call.ice_restart).length, expectedOffers);
+    assert.equal(
+      calls.filter((call) => call.op === "local_description" && call.ice_restart).length,
+      expectedOffers
+    );
     assert.equal(h.session.getSnapshot().peers.length, 0);
   }
 });
@@ -410,7 +516,9 @@ test("native reconnect creates a new helper session and restores explicit mute c
   const calls = [];
   const events = [];
   const h = harness({
-    acquireMicrophone: async () => { throw new Error("browser capture used"); },
+    acquireMicrophone: async () => {
+      throw new Error("browser capture used");
+    },
     nativeVoice: () => ({
       async start(listener) {
         const session = `native-${starts.length + 1}`;
@@ -419,8 +527,13 @@ test("native reconnect creates a new helper session and restores explicit mute c
         return session;
       },
       stop() {},
-      async call(request) { calls.push(request); return {}; },
-      async stats() { return null; },
+      async call(request) {
+        calls.push(request);
+        return {};
+      },
+      async stats() {
+        return null;
+      },
     }),
   });
   await h.welcome("z", 0);
@@ -429,7 +542,9 @@ test("native reconnect creates a new helper session and restores explicit mute c
   h.sockets[0].onclose({ code: 1006 });
   await h.tick(800);
   assert.deepEqual(starts, ["native-1", "native-2"]);
-  assert.ok(calls.some((call) => call.op === "mute" && call.session === "native-2" && call.muted === false));
+  assert.ok(
+    calls.some((call) => call.op === "mute" && call.session === "native-2" && call.muted === false)
+  );
   events[0]({ v: 1, event: "ended", session: "native-1" });
   assert.equal(h.session.getSnapshot().status, "reconnecting");
   assert.equal(h.pcs.length, 0);
@@ -447,16 +562,31 @@ test("missing TURN cannot silently enable direct traffic", async () => {
   assert.equal(h.session.getSnapshot().status, "unavailable");
   assert.equal(h.timers.size, 0);
 });
-test("replacement event and every application 44xx close are terminal", async () => {
-  for (const code of [4401, 4403, 4410, 4411, 4499]) {
+test("only 4410 ends the round; other application closes stay retryable", async () => {
+  for (const [code, status] of [
+    [4401, "unavailable"],
+    [4403, "unavailable"],
+    [4410, "closed"],
+    [4411, "replaced"],
+    [4499, "unavailable"],
+  ]) {
     const h = harness();
     await h.welcome();
     h.sockets[0].onclose({ code });
     await h.tick(100000);
     assert.equal(h.sockets.length, 1);
     assert.equal(h.timers.size, 0);
-    assert.equal(h.session.getSnapshot().status, code === 4411 ? "replaced" : "closed");
+    assert.equal(h.session.getSnapshot().status, status);
   }
+  const limited = harness();
+  await limited.welcome();
+  limited.sockets[0].onclose({ code: 4429 });
+  await limited.tick(9999);
+  assert.equal(limited.session.getSnapshot().status, "reconnecting");
+  assert.equal(limited.sockets.length, 1);
+  await limited.tick(1);
+  assert.equal(limited.sockets.length, 2);
+  limited.session.stop();
   const h = harness();
   await h.welcome();
   h.message({ type: "replaced" });
@@ -575,7 +705,9 @@ test("contest capped credentials remain usable until expiry without refresh poll
   assert.equal(calls, 1);
   assert.equal(h.session.getSnapshot().status, "connected");
   await h.tick(60000);
-  assert.equal(h.session.getSnapshot().status, "unavailable");
+  assert.equal(h.session.getSnapshot().status, "connected");
+  await h.tick(5000);
+  assert.equal(h.session.getSnapshot().status, "closed");
   assert.equal(h.timers.size, 0);
 });
 test("heartbeat every25 seconds and missing pong causes finite reconnect", async () => {
@@ -583,7 +715,9 @@ test("heartbeat every25 seconds and missing pong causes finite reconnect", async
   await h.welcome();
   await h.tick(25000);
   assert.ok(h.sockets[0].sent.some((m) => m.type === "ping"));
-  await h.tick(51000);
+  await h.tick(19000);
+  assert.equal(h.sockets.length, 1);
+  await h.tick(2000);
   assert.equal(h.sockets.length, 2);
   h.session.stop();
 });
@@ -637,7 +771,9 @@ test("microphone timeout releases a late owned clone", async () => {
   });
   const starting = h.session.start();
   await h.flush();
-  await h.tick(10000);
+  await h.tick(59999);
+  assert.equal(h.session.getSnapshot().status, "connecting");
+  await h.tick(1);
   assert.equal(h.session.getSnapshot().status, "unavailable");
   const track = h.track();
   resolve(h.stream([track]));
