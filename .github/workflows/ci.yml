@@ -301,11 +301,30 @@ jobs:
             gstreamer1.0-nice \
             gstreamer1.0-pulseaudio \
             gstreamer1.0-tools \
+            libnss3 \
             rpm libarchive-tools squashfs-tools \
             patchelf \
             libxdo-dev \
             libssl-dev \
             libayatana-appindicator3-dev
+
+      - name: Expose NSS SRTP modules at the AppImage source paths
+        if: matrix.platform == 'ubuntu-22.04'
+        # tauri.conf.json copies libsoftokn3.so and libfreeblpriv3.so from
+        # /usr/lib/x86_64-linux-gnu. Noble ships them there; jammy's libnss3
+        # ships them under nss/ (only libfreeblpriv3.so has a top-level
+        # symlink). Link any missing top-level path to the nss/ copy so the
+        # AppImage bundles the modules beside libnss3, then fail loudly if
+        # either source path still does not resolve.
+        run: |
+          lib=/usr/lib/x86_64-linux-gnu
+          for module in libsoftokn3.so libfreeblpriv3.so; do
+            if [ ! -e "$lib/$module" ] && [ -f "$lib/nss/$module" ]; then
+              sudo ln -s "nss/$module" "$lib/$module"
+            fi
+            test -f "$lib/$module" || { echo "missing $lib/$module"; exit 1; }
+            ls -l "$lib/$module"
+          done
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

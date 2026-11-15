@@ -269,6 +269,39 @@ export const SettingsPanel = memo(function SettingsPanel({
         micOpeningRef.current = false;
         micResources.current.setStream(stream);
         setMicStream(stream);
+        const tracks = stream.getAudioTracks();
+        const failMicrophone = (message: string, event: string) => {
+          micResources.current.cancel(cancelAnimationFrame);
+          setMicStream(null);
+          setMicLevel(0);
+          setMicActive(false);
+          setMicPending(false);
+          setMicError(message);
+          setReadiness((r) => ({ ...r, mic: "fail" }));
+          onSecurityEvent(event, "warn");
+        };
+        if (tracks.length === 0) {
+          failMicrophone(
+            "No microphone found. Connect one, then start the microphone again.",
+            "HARDWARE: Microphone grant had no audio track"
+          );
+          return;
+        }
+        const onEnded = () => {
+          if (!micResources.current.owns(request)) return;
+          failMicrophone(
+            "Microphone disconnected. Reconnect it, then start the microphone again.",
+            "HARDWARE: Microphone disconnected"
+          );
+        };
+        tracks.forEach((track) => track.addEventListener("ended", onEnded));
+        micResources.current.setTrackCleanup(() => {
+          tracks.forEach((track) => track.removeEventListener("ended", onEnded));
+        });
+        if (!tracks.some((track) => track.readyState === "live")) {
+          onEnded();
+          return;
+        }
 
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
         const ctx = new AudioCtx();

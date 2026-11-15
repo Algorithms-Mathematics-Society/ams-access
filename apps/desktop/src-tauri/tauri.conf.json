@@ -91,7 +91,11 @@
         "preRemoveScript": "debian/prerm"
       },
       "appimage": {
-        "bundleMediaFramework": true
+        "bundleMediaFramework": true,
+        "files": {
+          "/usr/lib/libsoftokn3.so": "/usr/lib/x86_64-linux-gnu/libsoftokn3.so",
+          "/usr/lib/libfreeblpriv3.so": "/usr/lib/x86_64-linux-gnu/libfreeblpriv3.so"
+        }
       }
     },
     "macOS": {

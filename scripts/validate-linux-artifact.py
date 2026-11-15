@@ -53,11 +53,24 @@ APPIMAGE_MEDIA_PLUGINS = {
     "rtpmanager": "libgstrtpmanager.so",
 }
 APPIMAGE_VOICE_LIBRARIES = (
-    "libgstreamer-1.0.so.0", "libgstwebrtc-1.0.so.0", "libgstsdp-1.0.so.0",
-    "libgstrtp-1.0.so.0", "libgstpbutils-1.0.so.0", "libgstbase-1.0.so.0",
-    "libgstvideo-1.0.so.0", "libgstaudio-1.0.so.0", "libgsttag-1.0.so.0",
+    "libgstreamer-1.0.so.0",
+    "libgstwebrtc-1.0.so.0",
+    "libgstsdp-1.0.so.0",
+    "libgstrtp-1.0.so.0",
+    "libgstpbutils-1.0.so.0",
+    "libgstbase-1.0.so.0",
+    "libgstvideo-1.0.so.0",
+    "libgstaudio-1.0.so.0",
+    "libgsttag-1.0.so.0",
     "libgstallocators-1.0.so.0",
+    "libnss3.so",
+    # NSS loads these SRTP crypto modules dynamically; ldd cannot discover them.
+    "libsoftokn3.so",
+    "libfreeblpriv3.so",
 )
+# NSS opens these from the directory libnss3 was loaded from, so a copy
+# anywhere else in the image does not make the bundled libnss3 use it.
+APPIMAGE_NSS_DYNAMIC_MODULES = ("libsoftokn3.so", "libfreeblpriv3.so")
 FORBIDDEN_DEPENDENCIES = {
     "rpm": ("xorg-x11-server-utils",),
 }
@@ -281,6 +294,16 @@ def inspect_tree(
         for library in APPIMAGE_VOICE_LIBRARIES:
             found = [p for p in root.rglob(library) if p.is_file()]
             check(f"appimage:voice-library-{library}", bool(found), [str(p.relative_to(root)) for p in found])
+        nss_dirs = sorted({p.parent for p in root.rglob("libnss3.so") if p.is_file()})
+        for module in APPIMAGE_NSS_DYNAMIC_MODULES:
+            check(
+                f"appimage:nss-module-beside-libnss3-{module}",
+                bool(nss_dirs) and all((d / module).is_file() for d in nss_dirs),
+                {
+                    "libnss3_dirs": [str(d.relative_to(root)) for d in nss_dirs],
+                    "found": [str(p.relative_to(root)) for p in root.rglob(module) if p.is_file()],
+                },
+            )
 
     return {"checks": checks, "valid": all(item["ok"] for item in checks)}
 

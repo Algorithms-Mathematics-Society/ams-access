@@ -273,6 +273,78 @@ class ArtifactValidatorTests(unittest.TestCase):
             failed = {item["name"] for item in result["checks"] if not item["ok"]}
             self.assertEqual({"appimage:voice-library-libgstwebrtc-1.0.so.0"}, failed)
 
+    def test_appimage_missing_dynamic_srtp_crypto_module_fails(self):
+        for module in ("libsoftokn3.so", "libfreeblpriv3.so"):
+            with self.subTest(module=module), tempfile.TemporaryDirectory() as tmp:
+                root, control, expected = self.make_tree(Path(tmp))
+                for library in validator.APPIMAGE_MEDIA_PLUGINS.values():
+                    plugin = root / "usr/lib/gstreamer-1.0" / library
+                    plugin.parent.mkdir(parents=True, exist_ok=True)
+                    plugin.write_bytes(b"fixture")
+                (root / "usr/lib" / module).unlink()
+                result = self.inspect(root, control, expected, "appimage")
+                failed = {item["name"] for item in result["checks"] if not item["ok"]}
+                self.assertEqual(
+                    {
+                        f"appimage:voice-library-{module}",
+                        f"appimage:nss-module-beside-libnss3-{module}",
+                    },
+                    failed,
+                )
+
+    def make_appimage_tree(self, base: Path):
+        root, control, expected = self.make_tree(base)
+        for library in validator.APPIMAGE_MEDIA_PLUGINS.values():
+            plugin = root / "usr/lib/gstreamer-1.0" / library
+            plugin.parent.mkdir(parents=True, exist_ok=True)
+            plugin.write_bytes(b"fixture")
+        (root / "usr/lib/libnss3.so").write_bytes(b"fixture")
+        return root, control, expected
+
+    def test_appimage_srtp_modules_without_bundled_libnss3_fail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, control, expected = self.make_appimage_tree(Path(tmp))
+            (root / "usr/lib/libnss3.so").unlink()
+            result = self.inspect(root, control, expected, "appimage")
+            failed = {item["name"] for item in result["checks"] if not item["ok"]}
+            self.assertEqual(
+                {
+                    "appimage:voice-library-libnss3.so",
+                    "appimage:nss-module-beside-libnss3-libsoftokn3.so",
+                    "appimage:nss-module-beside-libnss3-libfreeblpriv3.so",
+                },
+                failed,
+            )
+
+    def test_appimage_srtp_modules_outside_libnss3_directory_fail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, control, expected = self.make_appimage_tree(Path(tmp))
+            elsewhere = root / "usr/lib/nss"
+            elsewhere.mkdir()
+            for module in ("libsoftokn3.so", "libfreeblpriv3.so"):
+                (root / "usr/lib" / module).rename(elsewhere / module)
+            result = self.inspect(root, control, expected, "appimage")
+            failed = {item["name"] for item in result["checks"] if not item["ok"]}
+            self.assertEqual(
+                {
+                    "appimage:nss-module-beside-libnss3-libsoftokn3.so",
+                    "appimage:nss-module-beside-libnss3-libfreeblpriv3.so",
+                },
+                failed,
+            )
+
+    def test_appimage_srtp_modules_beside_libnss3_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, control, expected = self.make_appimage_tree(Path(tmp))
+            result = self.inspect(root, control, expected, "appimage")
+            self.assertTrue(result["valid"], result)
+            for module in ("libsoftokn3.so", "libfreeblpriv3.so"):
+                check = next(
+                    item for item in result["checks"]
+                    if item["name"] == f"appimage:nss-module-beside-libnss3-{module}"
+                )
+                self.assertEqual(["usr/lib"], check["detail"]["libnss3_dirs"])
+
     def test_appimage_offset_skips_false_early_magic(self):
         with tempfile.TemporaryDirectory() as tmp:
             image = Path(tmp) / "candidate.AppImage"
