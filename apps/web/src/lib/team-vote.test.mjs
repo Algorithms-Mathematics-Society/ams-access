@@ -255,7 +255,7 @@ test("detail limits accept values exactly at their bounds", () => {
   );
 });
 
-test("any part not plainly from the team's submission is treated as substituted", () => {
+test("a part with a non-submission origin is treated as substituted", () => {
   const origins = {
     reference: { substituted: true, reference: true },
     fallback: { substituted: true, reference: false },
@@ -282,10 +282,49 @@ test("any part not plainly from the team's submission is treated as substituted"
       assert.equal(integrationPartStatus(parseTeamVote(input).last_result, "1"), "AC");
     }
   }
-  for (const flag of [false, null]) {
+});
+
+test("substitution follows the server's scoring rule for every origin and flag value", () => {
+  // Expected values come from running ams-api `team_board.substituted()`, which
+  // decides whether a part earns its score. It uses Python truthiness, so null,
+  // "", 0, false, [] and {} all count as "not substituted" there.
+  const serverRule = [
+    [{}, false],
+    [{ origin: null }, false],
+    [{ origin: "" }, false],
+    [{ origin: 0 }, false],
+    [{ origin: false }, false],
+    [{ origin: [] }, false],
+    [{ origin: {} }, false],
+    [{ origin: "submission" }, false],
+    [{ origin: "reference" }, true],
+    [{ origin: "fallback" }, true],
+    [{ origin: "submission", substituted: null }, false],
+    [{ origin: "submission", substituted: false }, false],
+    [{ origin: "submission", substituted: 0 }, false],
+    [{ origin: "submission", substituted: "" }, false],
+    [{ origin: "submission", substituted: [] }, false],
+    [{ origin: "submission", substituted: {} }, false],
+    [{ origin: "submission", substituted: true }, true],
+    [{ origin: "submission", substituted: 1 }, true],
+    [{ origin: "submission", substituted: "reference" }, true],
+    [{ origin: null, substituted: true }, true],
+    [{ origin: null, substituted: "reference" }, true],
+    [{ origin: "", substituted: 1 }, true],
+    [{ origin: [], substituted: "reference" }, true],
+  ];
+  for (const [fields, substituted] of serverRule) {
     const input = board();
-    input.last_result.parts = { 1: { verdict: "AC", origin: "submission", substituted: flag } };
-    assert.equal(parseTeamVote(input).last_result.details.parts[0].substituted, false, `${flag}`);
+    input.last_result.parts = { 1: { verdict: "AC", passed_count: 2, total_count: 2, ...fields } };
+    const result = parseTeamVote(input).last_result;
+    const name = JSON.stringify(fields);
+    assert.equal(result.details.parts[0].substituted, substituted, name);
+    assert.equal(result.details.substitutions.length, substituted ? 1 : 0, name);
+    assert.equal(
+      integrationPartStatus(result, "1"),
+      substituted ? "Substituted · no score" : "AC",
+      name
+    );
   }
 });
 
