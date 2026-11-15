@@ -693,3 +693,28 @@ test("actual microphone handler rejects an already-ended grant before claiming L
   assert.equal(track.listeners.size, 0);
   assert.equal(track.stopped, 1);
 });
+
+test("actual microphone handler reports a grant with no audio track as no microphone found", async (t) => {
+  const video = {
+    kind: "video",
+    stopped: 0,
+    stop() {
+      this.stopped++;
+    },
+  };
+  const harness = micHandlerHarness(
+    t,
+    async () => ({ getTracks: () => [video], getAudioTracks: () => [] }),
+    fakeAudioContext()
+  );
+  await harness.handler();
+  assert.equal(harness.state.active, false);
+  assert.equal(harness.state.pending, false);
+  assert.equal(harness.state.readiness.mic, "fail");
+  assert.equal(harness.state.contexts, 0);
+  assert.equal(
+    harness.state.error,
+    "No microphone found. Connect one, then start the microphone again."
+  );
+  assert.equal(video.stopped, 1);
+});

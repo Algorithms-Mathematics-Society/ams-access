@@ -270,16 +270,29 @@ export const SettingsPanel = memo(function SettingsPanel({
         micResources.current.setStream(stream);
         setMicStream(stream);
         const tracks = stream.getAudioTracks();
-        const onEnded = () => {
-          if (!micResources.current.owns(request)) return;
+        const failMicrophone = (message: string, event: string) => {
           micResources.current.cancel(cancelAnimationFrame);
           setMicStream(null);
           setMicLevel(0);
           setMicActive(false);
           setMicPending(false);
-          setMicError("Microphone disconnected. Reconnect it, then start the microphone again.");
+          setMicError(message);
           setReadiness((r) => ({ ...r, mic: "fail" }));
-          onSecurityEvent("HARDWARE: Microphone disconnected", "warn");
+          onSecurityEvent(event, "warn");
+        };
+        if (tracks.length === 0) {
+          failMicrophone(
+            "No microphone found. Connect one, then start the microphone again.",
+            "HARDWARE: Microphone grant had no audio track"
+          );
+          return;
+        }
+        const onEnded = () => {
+          if (!micResources.current.owns(request)) return;
+          failMicrophone(
+            "Microphone disconnected. Reconnect it, then start the microphone again.",
+            "HARDWARE: Microphone disconnected"
+          );
         };
         tracks.forEach((track) => track.addEventListener("ended", onEnded));
         micResources.current.setTrackCleanup(() => {
