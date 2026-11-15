@@ -1,5 +1,6 @@
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { acquireOrdinaryEscape } from "../escape-ownership";
 import { Button } from "@astryxdesign/core/Button";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { VStack, HStack } from "@astryxdesign/core/Stack";
@@ -31,6 +32,24 @@ export default function TeamWorkspacePanel({
   useEffect(() => {
     if (suspended || !state.board) setOpen(false);
   }, [suspended, state.board]);
+  const suspendedRef = useRef(suspended);
+  suspendedRef.current = suspended;
+  const shouldRestoreFocus = useCallback(() => !suspendedRef.current, []);
+  useEffect(() => {
+    if (!open || suspended || !state.board) return;
+    const releaseEscape = acquireOrdinaryEscape();
+    const key = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing || suspendedRef.current) return;
+      event.preventDefault();
+      setOpen(false);
+    };
+    // Contest lockdown consumes Escape before the dialog's document listener.
+    window.addEventListener("keydown", key, true);
+    return () => {
+      window.removeEventListener("keydown", key, true);
+      releaseEscape();
+    };
+  }, [open, suspended, Boolean(state.board)]);
   const board = state.board;
   if (!board) return null;
   return (
@@ -49,7 +68,7 @@ export default function TeamWorkspacePanel({
           title="Team progress"
           width="min(calc(100vw - var(--spacing-8)), calc(var(--spacing-10) * 16))"
           labelId="team-workspace-dialog"
-          shouldRestoreFocus={() => !suspended}
+          shouldRestoreFocus={shouldRestoreFocus}
         >
           <VStack gap={4}>
             {state.status === "error" && (
@@ -81,7 +100,12 @@ export default function TeamWorkspacePanel({
                   {board.parts.map((part) => (
                     <ListItem
                       key={part.label}
-                      label={`${part.problem_label} · ${part.holder_is_me ? "Your part" : part.holder ? `Held by ${part.holder}` : "Unassigned"}`}
+                      // A node label wraps; a plain string would truncate long holder names.
+                      label={
+                        <Text
+                          style={{ overflowWrap: "anywhere" }}
+                        >{`${part.problem_label} · ${part.holder_is_me ? "Your part" : part.holder ? `Held by ${part.holder}` : "Unassigned"}`}</Text>
+                      }
                       description={
                         <VStack gap={1}>
                           <Text type="supporting">
@@ -95,7 +119,7 @@ export default function TeamWorkspacePanel({
                           </Text>
                           <Text type="supporting">
                             {board.submission?.last_result
-                              ? `Integration r${board.submission.last_result.revision}: `
+                              ? `Integration (revision ${board.submission.last_result.revision}): `
                               : "Integration: "}
                             {integrationPartStatus(board.submission?.last_result, part.label)}
                           </Text>

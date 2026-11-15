@@ -538,7 +538,7 @@ export function TeamVoiceControls({
                 {voiceMemberRows(team, snapshot).map(({ key, member, peer, status }) => (
                   <ListItem
                     key={key}
-                    label={`${member.display_name}${member.is_me ? " (you)" : ""}`}
+                    label={<Text>{`${member.display_name}${member.is_me ? " (you)" : ""}`}</Text>}
                     description={
                       <VStack gap={1}>
                         <Text>{status}</Text>

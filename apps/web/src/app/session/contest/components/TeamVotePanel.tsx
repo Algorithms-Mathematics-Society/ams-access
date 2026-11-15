@@ -7,10 +7,14 @@ import { Button } from "@astryxdesign/core/Button";
 
 import type { LobbyState } from "@/lib/team-lobby";
 import { voteRemainingMs, integrationStatus, shownIntegration } from "@/lib/team-vote";
-const duration = (ms: number) =>
-  `${Math.floor(Math.ceil(ms / 1000) / 60)}:${(Math.ceil(ms / 1000) % 60)
-    .toString()
-    .padStart(2, "0")}`;
+const duration = (ms: number) => {
+  const seconds = Math.ceil(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const remainder = String(seconds % 60).padStart(2, "0");
+  return minutes >= 60
+    ? `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}:${remainder}`
+    : `${minutes}:${remainder}`;
+};
 /** Parent dialog owns focus/geometry; shared lobby controller owns every request. */
 export function TeamVotePanel({
   state,
@@ -78,7 +82,7 @@ export function TeamVotePanel({
         Revision {vote.revision} · {vote.votes} / {vote.needed} approvals
       </Heading>
       {seen?.message && <Text role="status">{seen.message}</Text>}
-      <HStack gap={2} wrap="wrap">
+      <HStack gap={2} wrap="wrap" vAlign="center">
         <Button
           label={
             state.pending
@@ -93,7 +97,7 @@ export function TeamVotePanel({
           }
           onClick={() => (vote.mine ? onWithdraw(vote.revision) : onApprove(vote.revision))}
         />
-        {vote.revision > 0 && (
+        {vote.revision > 0 && !submitted && (
           <Text>
             {remaining > 0
               ? `Deadline in ${duration(remaining)}`
@@ -108,8 +112,13 @@ export function TeamVotePanel({
       )}
       {vote.submitted_revision !== null && (
         <Text role="status">
-          Revision {vote.submitted_revision} submitted{" "}
-          {vote.submitted_by === "deadline" ? "at the deadline" : "by vote"}.
+          Revision {vote.submitted_revision} submitted
+          {vote.submitted_by === "deadline"
+            ? " at the deadline"
+            : vote.submitted_by === "vote"
+              ? " by vote"
+              : ""}
+          .
         </Text>
       )}
       {state.error && <Text role="alert">{state.error}</Text>}

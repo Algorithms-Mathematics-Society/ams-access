@@ -7,6 +7,7 @@
  * /participant/sessions, native lockdown probe); nothing reaches a real API.
  */
 import assert from "node:assert/strict";
+import { parseTeamLobby } from "../apps/web/src/lib/team-lobby.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -51,22 +52,24 @@ export function lobbyBoard({
   return {
     team: { uid: "team-1", number: 7, name: "Team Seven" },
     members,
-    parts: ["1", "2", "3", "4"].map((label) => ({
-      label,
-      problem_label: `P${label}`,
-      ...(titles
-        ? {
-            title: titles[Number(label) - 1],
-            summary:
-              "Implements the shared interface; see the statement for the exact contract and limits.",
-          }
-        : {}),
-      holder: holders.has(label) ? members[holders.get(label)].display_name : null,
-      holder_is_me: holders.get(label) === me,
-      revision: null,
-      submission_status: null,
-      verdict: null,
-    })),
+    parts: claims
+      .map((_, index) => String(index + 1))
+      .map((label) => ({
+        label,
+        problem_label: `P${label}`,
+        ...(titles
+          ? {
+              title: titles[Number(label) - 1],
+              summary:
+                "Implements the shared interface; see the statement for the exact contract and limits.",
+            }
+          : {}),
+        holder: holders.has(label) ? members[holders.get(label)].display_name : null,
+        holder_is_me: holders.get(label) === me,
+        revision: null,
+        submission_status: null,
+        verdict: null,
+      })),
     phase: {
       name: phase,
       voice_open: true,
@@ -87,6 +90,41 @@ export function lobbyBoard({
   };
 }
 
+/** A locked board after the contest started, plus vote/integration fields (team-vote.ts). */
+export function workspaceBoard({
+  now = T0 + 40 * 60_000,
+  parts = {},
+  vote = {},
+  names,
+  ...rest
+} = {}) {
+  const lobby = lobbyBoard({
+    phase: "locked",
+    locked: true,
+    claims: ["1", "2", "3", "4"],
+    now,
+    names,
+  });
+  return {
+    ...lobby,
+    phase: { ...lobby.phase, name: "locked", starts_at: iso(T0 + 20 * 60_000) },
+    parts: lobby.parts.map((part) => ({ ...part, ...(parts[part.label] ?? {}) })),
+    revision: 2,
+    vote: {
+      votes: 1,
+      needed: 4,
+      mine: false,
+      deadline: iso(T0 + 3 * 3600_000 - 10 * 60_000),
+      ...vote,
+    },
+    submitted_revision: null,
+    submitted_by: null,
+    integration: null,
+    last_result: null,
+    ...rest,
+  };
+}
+
 const browser = await chromium.launch({
   headless: true,
   executablePath: process.env.CHROMIUM_PATH || "/usr/bin/google-chrome",
@@ -97,7 +135,14 @@ const report = { scenes: [], unknownApi: new Set(), unknownInvoke: new Set(), er
 /** Opens the contest page in a fresh context and enters it through the real gate. */
 export async function openScene(
   name,
-  { team, viewport = { width: 1366, height: 768 }, extra = {} }
+  {
+    team,
+    viewport = { width: 1366, height: 768 },
+    theme = "dark",
+    platform,
+    voice = false,
+    extra = {},
+  }
 ) {
   const context = await browser.newContext({ viewport });
   const page = await context.newPage();
@@ -107,8 +152,9 @@ export async function openScene(
     (m) => m.type() === "error" && report.errors.push(`${name}: console ${m.text().slice(0, 300)}`)
   );
   await page.addInitScript(
-    ({ CONTEST, SESSION, ATTEMPT }) => {
-      localStorage.setItem("ams_theme", "dark");
+    ({ CONTEST, SESSION, ATTEMPT, theme, platform }) => {
+      if (platform) Object.defineProperty(navigator, "platform", { value: platform });
+      localStorage.setItem("ams_theme", theme);
       localStorage.setItem("ams_participant_token_v5", "team-ui-fixture-not-a-real-token");
       localStorage.setItem(
         "ams_participant_token_expires_at_v5",
@@ -128,7 +174,11 @@ export async function openScene(
         JSON.stringify({ contestId: CONTEST, sessionId: SESSION, entryAttemptId: ATTEMPT })
       );
       window.__invokes = [];
-      const answers = { is_lockdown_engaged: true, ...(window.__fixtureInvokes ?? {}) };
+      const answers = {
+        is_lockdown_engaged: true,
+        set_escape_blocked: null,
+        ...(window.__fixtureInvokes ?? {}),
+      };
       window.__TAURI_INTERNALS__ = {
         transformCallback: () => Math.floor(Math.random() * 1e9),
         invoke: (command, args) => window.__TAURI__.core.invoke(command, args),
@@ -145,7 +195,7 @@ export async function openScene(
         event: { listen: () => Promise.resolve(() => {}) },
       };
     },
-    { CONTEST, SESSION, ATTEMPT }
+    { CONTEST, SESSION, ATTEMPT, theme, platform }
   );
   const now = team?.server_time ? Date.parse(team.server_time) : T0;
   await page.route("**/*", async (route) => {
@@ -189,6 +239,40 @@ export async function openScene(
       });
     if (p.endsWith(`/participant/contests/${CONTEST}/team`))
       return team ? json(team) : json({ detail: "not a team round" }, 404);
+    const problem = p.match(/\/problems\/(P[1-4])$/);
+    if (problem)
+      return json({
+        problem: {
+          label: problem[1],
+          title: `Part ${problem[1].slice(1)} service`,
+          score: 100,
+          schema_version: 2,
+          language: "cpp",
+          standard: "c++23",
+          limits: { cpu_time_ms: 1000, wall_time_ms: 2000, memory_mb: 256 },
+          statement: {
+            markdown:
+              "Implement the interface in `part.hpp`.\n\n## Constraints\n- 1 <= n <= 100000",
+            sha256: "fixture",
+            size_bytes: 80,
+          },
+          starter: {
+            source: '#include "part.hpp"\n\nint solve(int n) {\n    return n;\n}\n',
+            filename: "part.cpp",
+            sha256: "fixture",
+            size_bytes: 60,
+          },
+          samples: [{ label: "Example 1", input: "3", output: "3" }],
+          assets: [],
+          families: {
+            io: { graded: true, weight: 100, count: 1 },
+            behavior: { graded: false, weight: 0, count: 0, present: false },
+            symbolic: { graded: false, gate: true, rules: [], count: 0 },
+          },
+        },
+      });
+    if (p.endsWith("/drafts") || p.endsWith("/submissions") || p.includes("overrides"))
+      return json([]);
     if (p.endsWith(`/participant/contests/${CONTEST}`))
       return json({
         uid: CONTEST,
@@ -200,7 +284,13 @@ export async function openScene(
         is_practice: false,
         frozen: false,
         organization_name: "AMS",
-        problems: [],
+        problems: ["P1", "P2", "P3", "P4"].map((label, i) => ({
+          label,
+          title: `Part ${i + 1} service`,
+          score: 100,
+          time_limit_ms: 2000,
+          memory_limit_mb: 256,
+        })),
         server_time: iso(now),
         remaining_ms: 3 * 3600_000,
         phase: "running",
@@ -222,6 +312,27 @@ export async function openScene(
     report.unknownApi.add(`${route.request().method()} ${p}`);
     return json({ detail: "No team-round UI fixture", path: p }, 503);
   });
+  // Every socket remains local to the fixture; never connect to a real voice relay.
+  await page.routeWebSocket("**/*", (socket) => {
+    if (!voice) return socket.close();
+    socket.onMessage((message) => {
+      if (JSON.parse(String(message)).type === "ping")
+        socket.send(JSON.stringify({ type: "pong" }));
+    });
+    setTimeout(
+      () =>
+        socket.send(
+          JSON.stringify({
+            type: "welcome",
+            me: "m0",
+            peers: [],
+            ice_servers: [{ urls: "turn:127.0.0.1:9", username: "fixture", credential: "fixture" }],
+            expires_at: now / 1000 + 3600,
+          })
+        ),
+      100
+    );
+  });
   await page.clock.install({ time: now });
   await page.goto(`${base.origin}/session/contest/?contestId=${CONTEST}`);
   return { page, context };
@@ -237,7 +348,11 @@ export async function capture(page, name) {
 /** Objective layout and accessibility findings for whatever is on screen. */
 export async function audit(page, scope = "body") {
   return page.evaluate((scope) => {
-    const root = document.querySelector(scope) ?? document.body;
+    // An open modal owns the screen; controls behind its backdrop are covered on purpose.
+    const modal = [...document.querySelectorAll("dialog[open],[role=dialog][aria-modal=true]")].at(
+      -1
+    );
+    const root = modal ?? document.querySelector(scope) ?? document.body;
     const findings = [];
     const visible = (el) => {
       const r = el.getBoundingClientRect();
@@ -270,9 +385,26 @@ export async function audit(page, scope = "body") {
       const r = c.getBoundingClientRect();
       if (r.width <= 1 && r.height <= 1) continue; // visually hidden until focused
       if (!name) findings.push(`control without accessible name: ${c.outerHTML.slice(0, 120)}`);
-      if (!c.matches("input[type=checkbox],input[type=radio]") && (r.width < 24 || r.height < 24))
+      // Small targets with a clear 24px surrounding area satisfy the spacing exception.
+      const padded = {
+        left: r.left - Math.max(0, 24 - r.width) / 2,
+        right: r.right + Math.max(0, 24 - r.width) / 2,
+        top: r.top - Math.max(0, 24 - r.height) / 2,
+        bottom: r.bottom + Math.max(0, 24 - r.height) / 2,
+      };
+      const crowded = controls.some((other) => {
+        if (other === c || c.contains(other) || other.contains(c)) return false;
+        const b = other.getBoundingClientRect();
+        return (
+          b.left < padded.right &&
+          b.right > padded.left &&
+          b.top < padded.bottom &&
+          b.bottom > padded.top
+        );
+      });
+      if ((r.width < 24 || r.height < 24) && crowded)
         findings.push(
-          `small target ${Math.round(r.width)}x${Math.round(r.height)}: ${name.slice(0, 40)}`
+          `small target ${Math.round(r.width)}x${Math.round(r.height)}: ${name.slice(0, 40)} ${c.outerHTML.slice(0, 200)}`
         );
     }
     for (let i = 0; i < controls.length; i++)
@@ -353,16 +485,457 @@ const LONG = [
   "Dinah Haddad-Al-Rashidi Montgomery-Fitzgerald",
 ];
 /** Scenes grouped by the component file they exercise. */
+const completedResult = (revision, extra = {}) => ({
+  revision,
+  status: "completed",
+  verdict: "WA",
+  integration_verdict: "WA",
+  passed_count: 3,
+  total_count: 5,
+  failing_parts: ["2"],
+  project_failure: false,
+  substitutions: [],
+  fallbacks: {},
+  parts: {
+    1: { verdict: "AC", passed_count: 2, total_count: 2, origin: "submission" },
+    2: { verdict: "WA", passed_count: 1, total_count: 3, origin: "submission" },
+    3: { verdict: "AC", passed_count: 2, total_count: 2, origin: "submission" },
+    4: {
+      verdict: "AC",
+      passed_count: 2,
+      total_count: 2,
+      origin: "reference",
+      substituted: "reference",
+    },
+  },
+  ...extra,
+});
+const submittedParts = {
+  1: { revision: 3, submission_status: "completed", verdict: "AC" },
+  2: { revision: 2, submission_status: "completed", verdict: "WA" },
+  3: { revision: 1, submission_status: "in_progress", verdict: null },
+};
+const liveScene = (body, status = 200, options = {}) => ({
+  team: workspaceBoard(),
+  enter: true,
+  click: ["Team progress", "Live board"],
+  extra: { [`/contests/${CONTEST}/team/board`]: (route, json) => json(body, status) },
+  ...options,
+});
+const benchmarkRun = {
+  uid: "11111111-1111-1111-1111-111111111111",
+  revision: 2,
+  status: "ok",
+  median_ns: 100,
+  iqr_ns: 5,
+  repetitions: 7,
+  instructions: 400,
+  has_profile: true,
+  parts_profile: [{ owner: "1", share: 0.5, top_symbols: [["solve", 40]] }],
+};
+const benchmarkScene = (body, status = 200, options = {}) => ({
+  team: workspaceBoard(),
+  enter: true,
+  click: ["Team progress", "Benchmarks"],
+  extra: {
+    [`/contests/${CONTEST}/team/benchmarks`]: (route, json) => json(body, status),
+    [`/contests/${CONTEST}/team/benchmarks/${benchmarkRun.uid}/flamegraph`]: (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="80"><rect width="600" height="80" fill="orange"/><text x="12" y="40">solve (fixture)</text></svg>',
+      }),
+  },
+  ...options,
+});
+const voiceScene = (click, options = {}) => ({
+  team: workspaceBoard({ names: LONG }),
+  enter: true,
+  platform: "Win32",
+  voice: true,
+  click,
+  ...options,
+});
 export const SCENES = {
+  VoiceEndedNotice: [
+    [
+      "window-closed",
+      voiceScene([], {
+        after: async ({ page, team }) => {
+          team.phase.voice_open = false;
+          await page.clock.runFor(5500);
+          await page
+            .locator('[role="status"]:visible')
+            .filter({ hasText: /^Voice has ended for this round$/ })
+            .waitFor();
+        },
+      }),
+    ],
+  ],
+  TeamResultsView: [
+    [
+      "section-switch",
+      {
+        team: workspaceBoard({ last_result: completedResult(2) }),
+        enter: true,
+        click: ["Team progress", "Integration", "Progress", "Integration"],
+      },
+    ],
+  ],
+
+  TeamVoiceControls: [
+    [
+      "unbroken-name-narrow",
+      voiceScene(["Join voice"], {
+        team: workspaceBoard({ names: ["X".repeat(200), "Ben", "Chen", "Dinah"] }),
+        resize: { width: 390, height: 640 },
+      }),
+    ],
+
+    ["join-confirmation", voiceScene(["Join voice"])],
+    ["connected-settings", voiceScene(["Join voice", "Confirm join voice"])],
+    ["cancel-light", voiceScene(["Join voice", "Cancel"], { theme: "light" })],
+  ],
+  TeamVoicePresentation: [
+    [
+      "escape-join-confirmation",
+      voiceScene(["Join voice"], {
+        after: async ({ page }) => {
+          await page.keyboard.press("Escape");
+          assert.equal(
+            await page.getByRole("button", { name: "Confirm join voice", exact: true }).isVisible(),
+            false
+          );
+          assert(
+            await page
+              .getByRole("button", { name: "Join voice", exact: true })
+              .first()
+              .evaluate((el) => el === document.activeElement)
+          );
+        },
+      }),
+    ],
+
+    ["unavailable", { team: workspaceBoard({ names: LONG }), enter: true, click: ["Audio issue"] }],
+    ["connected-toolbar", voiceScene(["Join voice", "Confirm join voice", "Voice"])],
+  ],
+  LeaveTeamVoice: [
+    [
+      "confirmation-narrow-light",
+      voiceScene(["Join voice", "Confirm join voice", "Leave voice"], {
+        theme: "light",
+        resize: { width: 390, height: 640 },
+      }),
+    ],
+
+    ["confirmation", voiceScene(["Join voice", "Confirm join voice", "Leave voice"])],
+    ["stay", voiceScene(["Join voice", "Confirm join voice", "Leave voice", "Stay in voice"])],
+    [
+      "leave",
+      voiceScene(["Join voice", "Confirm join voice", "Leave voice", "Confirm leave voice"]),
+    ],
+  ],
+
+  TeamLiveBoard: [
+    [
+      "narrow-long-names",
+      liveScene(
+        {
+          teams: [
+            {
+              uid: "team-1",
+              name: "The Extraordinarily Long-Named Algorithmic Collective of Team Seven",
+              rank: 1,
+              score: 100,
+              solved: 4,
+              integration_passed: true,
+            },
+          ],
+        },
+        200,
+        { resize: { width: 390, height: 640 } }
+      ),
+    ],
+
+    ["empty", liveScene({ teams: [] })],
+    [
+      "long-names",
+      liveScene({
+        benchmark: {},
+        teams: [
+          {
+            uid: "team-1",
+            name: "The Extraordinarily Long-Named Algorithmic Collective of Team Seven",
+            rank: 1,
+            score: 100,
+            solved: 4,
+            integration_passed: true,
+            performance: { score: 1, median_ns: 100, iqr_ns: 5, revision: 2, pending: true },
+          },
+        ],
+      }),
+    ],
+    ["denied-light", liveScene({}, 403, { theme: "light" })],
+    ["retrying", liveScene({}, 503)],
+  ],
+  TeamBenchmarks: [
+    [
+      "flamegraph",
+      benchmarkScene([benchmarkRun], 200, {
+        click: ["Team progress", "Benchmarks", "View flamegraph for revision 2"],
+        expectText: "Flamegraph · revision 2",
+      }),
+    ],
+
+    ["empty", benchmarkScene([])],
+    ["measured", benchmarkScene([benchmarkRun])],
+    [
+      "pending-light",
+      benchmarkScene([{ ...benchmarkRun, pending_remeasurement: true, status: "noisy" }], 200, {
+        theme: "light",
+      }),
+    ],
+    ["error", benchmarkScene({}, 503)],
+  ],
+
+  TeamVotePanel: [
+    [
+      "submitted-without-reason",
+      {
+        team: workspaceBoard({ submitted_revision: 2 }),
+        enter: true,
+        click: ["Team progress"],
+        expectText: "Revision 2 submitted.",
+      },
+    ],
+    [
+      "deadline-confirmed",
+      {
+        team: workspaceBoard({
+          submitted_revision: 2,
+          submitted_by: "deadline",
+          vote: { deadline: iso(T0) },
+        }),
+        enter: true,
+        click: ["Team progress"],
+        expectText: "Revision 2 submitted at the deadline.",
+        after: async ({ page }) => {
+          assert.equal(
+            await page
+              .getByText("Deadline reached. Waiting for server confirmation.", { exact: true })
+              .count(),
+            0
+          );
+        },
+      },
+    ],
+
+    ["hours", { team: workspaceBoard(), enter: true, click: ["Team progress"] }],
+    [
+      "approved-light",
+      {
+        team: workspaceBoard({ vote: { mine: true } }),
+        theme: "light",
+        enter: true,
+        click: ["Team progress"],
+      },
+    ],
+    [
+      "deadline",
+      {
+        team: workspaceBoard({ vote: { deadline: iso(T0) } }),
+        enter: true,
+        click: ["Team progress"],
+      },
+    ],
+    [
+      "revision-zero",
+      { team: workspaceBoard({ revision: 0 }), enter: true, click: ["Team progress"] },
+    ],
+  ],
+  TeamIntegrationResult: [
+    [
+      "unbroken-substitution-reason",
+      {
+        team: workspaceBoard({
+          last_result: completedResult(2, {
+            substitutions: [{ label: "4", reason: "Y".repeat(400), origin: "reference" }],
+          }),
+        }),
+        enter: true,
+        click: ["Team progress", "Integration"],
+        resize: { width: 390, height: 480 },
+        after: async ({ page }) => {
+          await capture(page, "integration-unbroken-reason");
+          assert(
+            await page.getByText(/Reason: Y{400}/).evaluate((el) => {
+              const boundary = el.closest("dialog").getBoundingClientRect();
+              const range = document.createRange();
+              range.selectNodeContents(el);
+              return [...range.getClientRects()].every(
+                (r) => r.left >= boundary.left && r.right <= boundary.right
+              );
+            }),
+            "Substitution reason extends outside the integration dialog"
+          );
+        },
+      },
+    ],
+
+    ["empty", { team: workspaceBoard(), enter: true, click: ["Team progress", "Integration"] }],
+    [
+      "substituted",
+      {
+        team: workspaceBoard({ last_result: completedResult(2) }),
+        enter: true,
+        click: ["Team progress", "Integration"],
+      },
+    ],
+    [
+      "pending-and-previous",
+      {
+        team: workspaceBoard({
+          integration: { revision: 2, status: "running", verdict: null },
+          last_result: completedResult(1),
+        }),
+        theme: "light",
+        enter: true,
+        click: ["Team progress", "Integration"],
+      },
+    ],
+    [
+      "missing-details",
+      {
+        team: workspaceBoard({ last_result: { revision: 2, status: "completed", verdict: "AC" } }),
+        enter: true,
+        click: ["Team progress", "Integration"],
+      },
+    ],
+  ],
+
+  TeamWorkspacePanel: [
+    [
+      "unbroken-holder-short-window",
+      {
+        team: workspaceBoard({ names: ["Asha", "X".repeat(200), "Chen", "Dinah"] }),
+        enter: true,
+        click: ["Team progress"],
+        resize: { width: 390, height: 480 },
+        after: async ({ page }) => {
+          await capture(page, "workspace-unbroken-holder");
+          const fits = await page
+            .getByText("P2 · Held by " + "X".repeat(200), { exact: true })
+            .evaluate((el) => {
+              const boundary = el.closest("dialog").getBoundingClientRect();
+              const range = document.createRange();
+              range.selectNodeContents(el);
+              return [...range.getClientRects()].every(
+                (r) => r.left >= boundary.left && r.right <= boundary.right
+              );
+            });
+          assert(fits, "Unbroken holder name extends outside Team progress");
+          const footer = page.getByText("Your submissions: open Attempts below the editor.", {
+            exact: true,
+          });
+          await footer.scrollIntoViewIfNeeded();
+          assert(
+            await footer.evaluate((el) => {
+              const r = el.getBoundingClientRect(),
+                d = el.closest("dialog").getBoundingClientRect();
+              return r.top >= d.top && r.bottom <= d.bottom;
+            }),
+            "Short dialog cannot scroll to its footer"
+          );
+        },
+      },
+    ],
+
+    [
+      "narrow-light",
+      {
+        team: workspaceBoard({ names: LONG }),
+        enter: true,
+        click: ["Team progress"],
+        theme: "light",
+        resize: { width: 390, height: 640 },
+      },
+    ],
+
+    ["fresh", { team: workspaceBoard(), enter: true, click: ["Team progress"] }],
+    [
+      "submitted-and-judged",
+      {
+        team: workspaceBoard({
+          parts: submittedParts,
+          submitted_revision: 2,
+          submitted_by: "vote",
+          last_result: completedResult(2),
+        }),
+        enter: true,
+        click: ["Team progress"],
+      },
+    ],
+    [
+      "long-holder-names",
+      {
+        team: workspaceBoard({
+          parts: submittedParts,
+          names: LONG,
+          last_result: completedResult(1),
+        }),
+        enter: true,
+        click: ["Team progress"],
+      },
+    ],
+    [
+      "submitted-1280x720",
+      {
+        team: workspaceBoard({ parts: submittedParts }),
+        enter: true,
+        click: ["Team progress"],
+        viewport: { width: 1280, height: 720 },
+      },
+    ],
+  ],
   TeamLobby: [
+    [
+      "five-members-long-names",
+      {
+        team: lobbyBoard({
+          claims: ["1", null, "3", null, "5"],
+          names: [...LONG, "Z".repeat(200)],
+          ready: [false, false, false, false, false],
+        }),
+        viewport: { width: 1280, height: 600 },
+      },
+    ],
+
+    [
+      "narrow-light",
+      {
+        team: lobbyBoard({ claims: ["1", null, "3", null], names: LONG }),
+        theme: "light",
+        viewport: { width: 390, height: 640 },
+      },
+    ],
+    [
+      "narrow-320",
+      {
+        team: lobbyBoard({ claims: ["1", null, "3", null], names: LONG }),
+        viewport: { width: 320, height: 640 },
+      },
+    ],
+
     ["waiting", { team: lobbyBoard({ phase: "waiting", now: T0 - 5 * 60_000 }) }],
     [
-      "waiting-unscheduled",
+      "waiting-invalid-schedule",
       {
         team: {
           ...lobbyBoard({ phase: "waiting", now: T0 - 5 * 60_000 }),
           phase: { ...lobbyBoard().phase, name: "waiting", selection_opens_at: null },
         },
+        invalidProjection: true,
+        expectText: "Team status unavailable. Reconnecting…",
       },
     ],
     ["discussion", { team: lobbyBoard({ phase: "discussion", now: T0 + 60_000 }) }],
@@ -446,14 +1019,61 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const summary = [];
   try {
     for (const [name, options] of scenes) {
+      if (options.team) {
+        if (options.invalidProjection) assert.throws(() => parseTeamLobby(options.team));
+        else parseTeamLobby(options.team);
+      }
       const { page, context } = await openScene(`${file}/${name}`, options);
-      await page.getByRole("heading", { level: 1 }).first().waitFor({ timeout: 30_000 });
+      await page
+        .getByRole("heading", {
+          level: 1,
+          name: options.team && !options.invalidProjection ? options.team.team.name : "Team lobby",
+          exact: true,
+        })
+        .waitFor({ timeout: 30_000 });
       await page.waitForTimeout(1500);
+      if (options.enter) {
+        // Same path as a candidate: the post-lock Ready opens the part workspace.
+        await page.getByRole("button", { name: "Ready", exact: true }).click();
+        await page.getByRole("button", { name: "Team progress" }).waitFor({ timeout: 30_000 });
+        await page.waitForTimeout(800);
+      }
+      for (const label of options.click ?? []) {
+        await page.getByRole("button", { name: label, exact: true }).last().click();
+        await page.waitForTimeout(600);
+      }
+      if (options.resize) {
+        await page.setViewportSize(options.resize);
+        await page.waitForTimeout(300);
+      }
+      if (options.after) await options.after({ page, team: options.team });
+      if (options.expectText)
+        await page.getByText(options.expectText, { exact: true }).first().waitFor();
       await capture(page, `${file}-${name}`);
       const findings = await audit(page, "body");
       summary.push({ scene: name, findings });
+      // An ordinary team dialog must return keyboard focus to its opener.
+      const dialog = page.locator("dialog[open]");
+      if (await dialog.count()) {
+        await page.keyboard.press("Tab");
+        assert(
+          await dialog.evaluate((el) => el.contains(document.activeElement)),
+          "Tab escaped the dialog"
+        );
+        await page.keyboard.press("Escape");
+        await dialog.waitFor({ state: "hidden" });
+        assert(
+          await page
+            .getByRole("button", { name: "Team progress", exact: true })
+            .evaluate((el) => el === document.activeElement),
+          "Dialog did not restore focus"
+        );
+      }
       await context.close();
     }
+  } catch (error) {
+    report.errors.push(error instanceof Error ? error.message : String(error));
+    throw error;
   } finally {
     await browser.close();
     for (const { scene, findings } of summary)
@@ -464,7 +1084,21 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     // Resource errors are fixture responses (404 assets, injected 5xx); page exceptions still fail.
     const errors = report.errors.filter((e) => !/Failed to load resource/.test(e));
     if (errors.length) console.log("PAGE ERRORS\n" + errors.join("\n"));
+    await writeFile(
+      path.join(out, "report.json"),
+      JSON.stringify(
+        {
+          file,
+          scenes: summary,
+          unknownApi: [...report.unknownApi],
+          errors,
+        },
+        null,
+        2
+      )
+    );
     console.log("OUT", out);
-    if (errors.length) process.exitCode = 1;
+    if (errors.length || report.unknownApi.size || summary.some((s) => s.findings.length))
+      process.exitCode = 1;
   }
 }

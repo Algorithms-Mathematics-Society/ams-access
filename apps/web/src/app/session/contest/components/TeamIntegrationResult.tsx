@@ -22,7 +22,7 @@ export function TeamIntegrationResult({ result }: { result: TeamIntegrationSumma
       ) : (
         <>
           {detail.substitutions.map((sub, index) => (
-            <Text key={`${sub.label}-${index}`} role="status">
+            <Text key={`${sub.label}-${index}`} role="status" style={{ overflowWrap: "anywhere" }}>
               Part {sub.label} was not supplied by your team —{" "}
               {sub.reference ? "the setter’s reference" : "a substitute"} was linked so the rest
               could be tested. It scores nothing, and integration does not count until every part is

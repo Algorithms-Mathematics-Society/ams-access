@@ -164,6 +164,7 @@ export function TeamBenchmarks({
       flight.current?.abort();
       flight.current = null;
       setBusy(false);
+      setError(null);
       setRuns([]);
       setLoaded(false);
       setTruncated(false);

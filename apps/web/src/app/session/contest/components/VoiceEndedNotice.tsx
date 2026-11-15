@@ -32,7 +32,7 @@ export function useVoiceEndedNotice({
       wasOpen.current = false;
       setVisible(true);
     }
-  }, [enabled, status, voiceOpen]);
+  }, [contestUid, enabled, status, voiceOpen]);
   useEffect(() => {
     if (!visible) return;
     const timer = setTimeout(() => setVisible(false), 5000);
