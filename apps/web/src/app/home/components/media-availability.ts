@@ -33,7 +33,10 @@ export function createMediaRequestOwner() {
   let context: AudioContext | null = null;
   let analyser: AnalyserNode | null = null;
   let frame: number | null = null;
+  let trackCleanup: (() => void) | null = null;
   const release = (cancelFrame: (id: number) => void) => {
+    trackCleanup?.();
+    trackCleanup = null;
     if (frame !== null) cancelFrame(frame);
     frame = null;
     analyser = null;
@@ -55,6 +58,10 @@ export function createMediaRequestOwner() {
     cancel(cancelFrame: (id: number) => void = () => {}) {
       generation += 1;
       release(cancelFrame);
+    },
+    setTrackCleanup(cleanup: () => void) {
+      trackCleanup?.();
+      trackCleanup = cleanup;
     },
     setStream(value: MediaStream) {
       stream = value;

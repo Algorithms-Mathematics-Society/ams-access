@@ -53,10 +53,19 @@ APPIMAGE_MEDIA_PLUGINS = {
     "rtpmanager": "libgstrtpmanager.so",
 }
 APPIMAGE_VOICE_LIBRARIES = (
-    "libgstreamer-1.0.so.0", "libgstwebrtc-1.0.so.0", "libgstsdp-1.0.so.0",
-    "libgstrtp-1.0.so.0", "libgstpbutils-1.0.so.0", "libgstbase-1.0.so.0",
-    "libgstvideo-1.0.so.0", "libgstaudio-1.0.so.0", "libgsttag-1.0.so.0",
+    "libgstreamer-1.0.so.0",
+    "libgstwebrtc-1.0.so.0",
+    "libgstsdp-1.0.so.0",
+    "libgstrtp-1.0.so.0",
+    "libgstpbutils-1.0.so.0",
+    "libgstbase-1.0.so.0",
+    "libgstvideo-1.0.so.0",
+    "libgstaudio-1.0.so.0",
+    "libgsttag-1.0.so.0",
     "libgstallocators-1.0.so.0",
+    # NSS loads these SRTP crypto modules dynamically; ldd cannot discover them.
+    "libsoftokn3.so",
+    "libfreeblpriv3.so",
 )
 FORBIDDEN_DEPENDENCIES = {
     "rpm": ("xorg-x11-server-utils",),

@@ -194,6 +194,8 @@ function micHandlerHarness(t, getUserMedia, AudioCtx) {
     stream: null,
     level: 0,
     contexts: 0,
+    error: null,
+    readiness: {},
     frames: [],
     cancelled: [],
     security: [],
@@ -211,7 +213,19 @@ function micHandlerHarness(t, getUserMedia, AudioCtx) {
     if (oldCancelRaf) globalThis.cancelAnimationFrame = oldCancelRaf;
     else delete globalThis.cancelAnimationFrame;
   });
-  media(t, getUserMedia);
+  media(t, async (constraints) => {
+    const stream = await getUserMedia(constraints);
+    if (!stream.getAudioTracks) {
+      const tracks = stream.getTracks();
+      tracks.forEach((track) => {
+        track.readyState ??= "live";
+        track.addEventListener ??= () => {};
+        track.removeEventListener ??= () => {};
+      });
+      stream.getAudioTracks = () => tracks;
+    }
+    return stream;
+  });
   globalThis.window = {
     AudioContext: class extends AudioCtx {
       constructor() {
@@ -237,8 +251,12 @@ function micHandlerHarness(t, getUserMedia, AudioCtx) {
     setMicPending: (value) => {
       state.pending = value;
     },
-    setMicError() {},
-    setReadiness() {},
+    setMicError(value) {
+      state.error = value;
+    },
+    setReadiness(update) {
+      state.readiness = update(state.readiness);
+    },
     onSecurityEvent: (event) => state.security.push(event),
     describeMediaError: (error) => String(error),
     getUserMediaWithTimeout,
@@ -582,4 +600,96 @@ test("camera acquisition ignores duplicate activations but allows a later retry"
   assert.equal(requests, 2);
   resolve({ getTracks: () => [] });
   await retry;
+});
+
+function microphoneTrack() {
+  const listeners = new Set();
+  return {
+    kind: "audio",
+    readyState: "live",
+    stopped: 0,
+    listeners,
+    stop() {
+      this.stopped++;
+      this.readyState = "ended";
+    },
+    addEventListener(type, listener) {
+      assert.equal(type, "ended");
+      listeners.add(listener);
+    },
+    removeEventListener(type, listener) {
+      assert.equal(type, "ended");
+      listeners.delete(listener);
+    },
+    end() {
+      this.readyState = "ended";
+      for (const listener of [...listeners]) listener();
+    },
+  };
+}
+
+test("actual microphone ended event releases resources, fails readiness and allows retry; stale events cannot cancel replacement", async (t) => {
+  const first = microphoneTrack();
+  const second = microphoneTrack();
+  const contexts = [];
+  class AudioContext extends fakeAudioContext() {
+    constructor() {
+      super();
+      contexts.push(this);
+    }
+  }
+  let calls = 0;
+  const harness = micHandlerHarness(
+    t,
+    async () => {
+      const track = calls++ === 0 ? first : second;
+      return { getTracks: () => [track], getAudioTracks: () => [track] };
+    },
+    AudioContext
+  );
+  await harness.handler();
+  const staleEnded = [...first.listeners][0];
+  const staleDraw = harness.state.frames[0];
+  first.end();
+  assert.equal(harness.state.active, false);
+  assert.equal(harness.state.pending, false);
+  assert.equal(harness.state.stream, null);
+  assert.equal(harness.state.level, 0);
+  assert.equal(harness.state.readiness.mic, "fail");
+  assert.match(harness.state.error, /Reconnect.*start the microphone again/);
+  assert.equal(first.listeners.size, 0);
+  assert.equal(first.stopped, 1);
+  assert.equal(contexts[0].closeCalls, 1);
+  assert.equal(harness.resources.getAnalyser(), null);
+  assert.deepEqual(harness.state.cancelled, [1]);
+  staleDraw(200);
+  assert.equal(harness.state.frames.length, 1);
+  await harness.handler();
+  assert.equal(harness.state.active, true);
+  assert.equal(harness.state.readiness.mic, "ok");
+  assert.equal(harness.state.error, null);
+  staleEnded();
+  assert.equal(harness.state.active, true);
+  assert.equal(second.stopped, 0);
+  assert.equal(contexts[1].closeCalls, 0);
+  await harness.handler();
+  assert.equal(second.listeners.size, 0);
+  assert.equal(contexts[1].closeCalls, 1);
+});
+
+test("actual microphone handler rejects an already-ended grant before claiming Listening", async (t) => {
+  const track = microphoneTrack();
+  track.readyState = "ended";
+  const harness = micHandlerHarness(
+    t,
+    async () => ({ getTracks: () => [track], getAudioTracks: () => [track] }),
+    fakeAudioContext()
+  );
+  await harness.handler();
+  assert.equal(harness.state.active, false);
+  assert.equal(harness.state.pending, false);
+  assert.equal(harness.state.readiness.mic, "fail");
+  assert.equal(harness.state.contexts, 0);
+  assert.equal(track.listeners.size, 0);
+  assert.equal(track.stopped, 1);
 });

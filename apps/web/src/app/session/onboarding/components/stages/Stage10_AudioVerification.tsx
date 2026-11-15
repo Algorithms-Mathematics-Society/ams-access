@@ -24,12 +24,26 @@ export function Stage10_AudioVerification({
   const [level, setLevel] = useState(0);
   const [phase, setPhase] = useState<"checking" | "pass" | "fail">("checking");
   const [retryKey, setRetryKey] = useState(0);
+  const [waitingForPermission, setWaitingForPermission] = useState(false);
+  const cancelAttemptRef = useRef<(() => void) | null>(null);
+  const completedRef = useRef(false);
+  const retryQueuedRef = useRef(true);
+  const pendingWarning =
+    "Microphone access has not been confirmed. Continuing records this warning; contest entry requirements still apply.";
   const warning =
     "Microphone access is unavailable. Allow microphone access in your system or browser settings, close other apps using it, then try again. If access remains unavailable, ask an invigilator. Continuing keeps this warning; contest entry requirements still apply.";
   const analyserRef = useRef<AnalyserNode | null>(null);
   const rafRef = useRef<number>(0);
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+
+  function continueWithWarning(detail: string) {
+    if (completedRef.current) return;
+    completedRef.current = true;
+    cancelAttemptRef.current?.();
+    if (onWarn) onWarn(detail);
+    else onPass();
+  }
 
   useEffect(() => {
     invoke<{ os: string }>("get_platform")
@@ -40,6 +54,25 @@ export function Stage10_AudioVerification({
   useEffect(() => {
     let cancelled = false;
     let passTimer: ReturnType<typeof setTimeout> | null = null;
+    completedRef.current = false;
+    setWaitingForPermission(false);
+    // Presentation only: keep the original request owned while the prompt is open.
+    // Never start another capture just because the user needs time to answer it.
+    const waitTimer = setTimeout(() => {
+      if (!cancelled) setWaitingForPermission(true);
+    }, 15_000);
+    const cancelAttempt = () => {
+      cancelled = true;
+      clearTimeout(waitTimer);
+      if (passTimer) clearTimeout(passTimer);
+      cancelAnimationFrame(rafRef.current);
+      stopMediaStream(streamRef.current);
+      streamRef.current = null;
+      audioCtxRef.current?.close().catch(() => {});
+      audioCtxRef.current = null;
+      analyserRef.current = null;
+    };
+    cancelAttemptRef.current = cancelAttempt;
 
     async function init() {
       let promptOpen = false;
@@ -93,12 +126,20 @@ export function Stage10_AudioVerification({
         }
         rafRef.current = requestAnimationFrame(tick);
 
+        clearTimeout(waitTimer);
+        setWaitingForPermission(false);
         setPhase("pass");
         passTimer = setTimeout(() => {
-          if (!cancelled) onPass();
+          if (!cancelled && !completedRef.current) {
+            completedRef.current = true;
+            onPass();
+          }
         }, 3500);
       } catch (err) {
         if (cancelled) return;
+        clearTimeout(waitTimer);
+        setWaitingForPermission(false);
+        retryQueuedRef.current = false;
         setMissing(err instanceof DOMException && err.name === "NotFoundError");
         setUnanswered(promptOpen);
         // A failed analyser must not keep the microphone open while the
@@ -115,13 +156,8 @@ export function Stage10_AudioVerification({
     }
     void init();
     return () => {
-      cancelled = true;
-      if (passTimer) clearTimeout(passTimer);
-      cancelAnimationFrame(rafRef.current);
-      stopMediaStream(streamRef.current);
-      streamRef.current = null;
-      audioCtxRef.current?.close().catch(() => {});
-      audioCtxRef.current = null;
+      cancelAttempt();
+      if (cancelAttemptRef.current === cancelAttempt) cancelAttemptRef.current = null;
     };
   }, [onPass, retryKey]);
 
@@ -147,7 +183,30 @@ export function Stage10_AudioVerification({
         The meter shows live input activity, not a sound-quality score.
       </Text>
       {phase === "checking" && (
-        <CheckLine label="Requesting microphone access…" status="checking" />
+        <VStack gap={3}>
+          <CheckLine
+            label={
+              waitingForPermission
+                ? "Still waiting for microphone access"
+                : "Requesting microphone access…"
+            }
+            status="checking"
+          />
+          {waitingForPermission && (
+            <>
+              <Text color="secondary" role="status">
+                Answer the microphone permission prompt if one is open. You can keep waiting, or
+                continue with a warning if access cannot be confirmed. Contest entry requirements
+                still apply.
+              </Text>
+              <Button
+                label="Continue with warning"
+                variant="primary"
+                onClick={() => continueWithWarning(pendingWarning)}
+              />
+            </>
+          )}
+        </VStack>
       )}
       {phase === "pass" && <CheckLine label="Microphone access granted" status="pass" />}
       {phase === "fail" && (
@@ -173,6 +232,10 @@ export function Stage10_AudioVerification({
               label="Try microphone again"
               variant="secondary"
               onClick={() => {
+                if (retryQueuedRef.current || completedRef.current) return;
+                retryQueuedRef.current = true;
+                cancelAttemptRef.current?.();
+                setWaitingForPermission(false);
                 setPhase("checking");
                 setLevel(0);
                 setRetryKey((key) => key + 1);
@@ -190,7 +253,7 @@ export function Stage10_AudioVerification({
             <Button
               label="Continue with warning"
               variant="primary"
-              onClick={() => (onWarn ? onWarn(warning) : onPass())}
+              onClick={() => continueWithWarning(warning)}
             />
           </HStack>
         </VStack>

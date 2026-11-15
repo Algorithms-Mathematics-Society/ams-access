@@ -3871,8 +3871,14 @@ export default function ContestPageClient() {
           cameraOffReported = false;
           if (!detector && !detectorFailed) {
             try {
-              detector = await loadPresenceDetector();
+              const loaded = await loadPresenceDetector();
+              if (cancelled) {
+                loaded.dispose?.();
+                return;
+              }
+              detector = loaded;
             } catch {
+              if (cancelled) return;
               detectorFailed = true;
               logPresence(
                 "presence_monitor_unavailable",
@@ -3930,8 +3936,14 @@ export default function ContestPageClient() {
             if (!objectDetectorFailed && !cancelled) {
               if (!objectDetector) {
                 try {
-                  objectDetector = await loadObjectDetector();
+                  const loaded = await loadObjectDetector();
+                  if (cancelled) {
+                    loaded.close?.();
+                    return;
+                  }
+                  objectDetector = loaded;
                 } catch {
+                  if (cancelled) return;
                   // One attempt. A machine that cannot load this must not
                   // retry every minute for two hours.
                   objectDetectorFailed = true;
