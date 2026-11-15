@@ -98,6 +98,16 @@ test("voice end announces for five seconds, not initial wait or transient polls"
   assert.equal(h.render({ voiceOpen: false }), null);
   assert.equal(h.timer, null);
 });
+test("voice end is tracked after switching between two open contests", () => {
+  const h = harness();
+  assert.equal(h.render({ contestUid: "one" }), null);
+  assert.equal(h.render({ contestUid: "two" }), null);
+  const notice = h.render({ contestUid: "two", voiceOpen: false });
+  assert.equal(notice?.node.props.children, "Voice has ended for this round");
+  assert.equal(h.timer?.ms, 5000);
+  assert.equal(h.render({ contestUid: "three", voiceOpen: false }), null);
+  assert.equal(h.timer, null);
+});
 test("local round end retains notice when disabled and cleans up on unmount", () => {
   const h = harness();
   h.render();
@@ -638,7 +648,9 @@ test("assignment roster renders once in its own rail with authoritative member a
   assert.equal(rail.props.style.overflow, undefined, "members share page scrolling");
   const rows = rail.props.children.props.children;
   assert.equal(rows.length, 3);
-  assert.equal(rows[0].props.label, "Same name (you)");
+  // A node label wraps; a plain string label would truncate long names.
+  assert.equal(rows[0].props.label.type, "Text");
+  assert.equal(rows[0].props.label.props.children, "Same name (you)");
   assert.equal(rows[0].props.description.props.children, "Part A");
   assert.equal(rows[1].props.description.props.children, "Part B");
   assert.equal(rows[1].props.endContent.props.children[2].props.label, "Auto-assigned");

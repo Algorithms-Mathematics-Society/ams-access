@@ -83,7 +83,11 @@ export default function TeamLiveBoard({
         {state.board?.teams.map((team) => (
           <ListItem
             key={team.uid}
-            label={`${team.rank}. ${team.name}${team.uid === ownTeamUid ? " · Your team" : ""}`}
+            label={
+              <Text style={{ overflowWrap: "anywhere" }}>
+                {`${team.rank}. ${team.name}${team.uid === ownTeamUid ? " · Your team" : ""}`}
+              </Text>
+            }
             style={
               team.uid === ownTeamUid ? { backgroundColor: "var(--color-bg-secondary)" } : undefined
             }

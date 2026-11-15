@@ -47,6 +47,7 @@ const slots = [],
   requests = [],
   revoked = [];
 let cursor = 0,
+  token = "signed-in",
   epoch = 1,
   authListener,
   resolveRequest;
@@ -94,7 +95,7 @@ new Function(
     if (name.includes("candidate-auth"))
       return {
         authHeaders: () => ({ Authorization: "Bearer test" }),
-        participantToken: () => String(epoch),
+        participantToken: () => token,
       };
     if (name.includes("proctor-api"))
       return {
@@ -176,3 +177,21 @@ nodes(tree)
   .find((n) => n.props?.label === "Close flamegraph")
   .props.onClick();
 assert.ok(revoked.includes("blob:test"), "close revokes image URL");
+
+// A failed request belongs to the old identity and must clear on sign-out.
+nodes(render(true))
+  .find((n) => n.props?.label === "Refresh benchmarks")
+  .props.onClick();
+resolveRequest(new Response("unavailable", { status: 503 }));
+await new Promise((r) => setImmediate(r));
+assert.ok(nodes(render(true)).some((n) => n.props?.role === "alert"));
+const beforeSignOut = requests.length;
+token = null;
+epoch++;
+authListener();
+assert.equal(requests.length, beforeSignOut, "sign-out must not fetch another history");
+assert.equal(
+  nodes(render(true)).some((n) => n.props?.role === "alert"),
+  false,
+  "sign-out clears the old identity's request error"
+);

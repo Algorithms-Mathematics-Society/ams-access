@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { voteRemainingMs, shownIntegration } from "../../../lib/team-vote.ts";
 
-function harness(file, exported) {
+function harness(file, exported, browser = { addEventListener() {}, removeEventListener() {} }) {
   const source = readFileSync(new URL(`./components/${file}.tsx`, import.meta.url), "utf8");
   const values = [],
     effects = [],
@@ -18,6 +18,7 @@ function harness(file, exported) {
     "performance",
     "setInterval",
     "clearInterval",
+    "window",
     ts.transpileModule(source, {
       compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
     }).outputText
@@ -26,6 +27,13 @@ function harness(file, exported) {
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
       if (name === "react")
         return {
+          useRef(initial) {
+            const index = cursor++;
+            return (values[index] ??= { current: initial });
+          },
+          useCallback(fn) {
+            return fn;
+          },
           useState(initial) {
             const index = cursor++;
             if (!(index in values))
@@ -45,6 +53,7 @@ function harness(file, exported) {
             }
           },
         };
+      if (name === "../escape-ownership") return { acquireOrdinaryEscape: () => () => {} };
       if (name === "next/dynamic") return { default: () => "TeamResultsView" };
       if (name === "@/lib/team-vote")
         return {
@@ -58,7 +67,8 @@ function harness(file, exported) {
     exports,
     { now: () => 0 },
     () => 1,
-    () => {}
+    () => {},
+    browser
   );
   return (props) => {
     cursor = 0;
@@ -207,4 +217,79 @@ test("unsafe vote states stay disabled and expiry waits for server confirmation"
     true
   );
   assert.match(text(render({ state: { board: null } })), /unavailable/);
+});
+
+test("team progress handles Escape without restoring focus into a suspended workspace", () => {
+  let key;
+  const browser = {
+    addEventListener: (name, fn) => {
+      key = fn;
+    },
+    removeEventListener() {},
+  };
+  const render = harness("TeamWorkspacePanel", "default", browser);
+  const props = { state: state(), contestUid: "contest", suspended: false };
+  nodes(render(props))
+    .find((n) => n.type === "Button")
+    .props.onClick();
+  const dialog = nodes(render(props)).find((n) => n.type === "AccessDialog");
+  let prevented = false;
+  key({
+    key: "Escape",
+    preventDefault() {
+      prevented = true;
+    },
+  });
+  assert.equal(prevented, true);
+  assert.equal(
+    nodes(render(props)).some((n) => n.type === "AccessDialog"),
+    false
+  );
+  assert.equal(dialog.props.shouldRestoreFocus(), true);
+  render({ ...props, suspended: true });
+  assert.equal(dialog.props.shouldRestoreFocus(), false);
+});
+
+test("approval deadlines distinguish hours from minutes at the hour boundary", () => {
+  for (const [seconds, expected] of [
+    [59, "0:59"],
+    [3599, "59:59"],
+    [3600, "1:00:00"],
+    [7800, "2:10:00"],
+  ]) {
+    const s = state();
+    s.board.submission.deadline = new Date(
+      Date.parse(s.board.server_time) + seconds * 1000
+    ).toISOString();
+    const render = harness("TeamVotePanel", "TeamVotePanel");
+    assert.ok(text(render({ state: s })).includes(`Deadline in ${expected}`));
+  }
+});
+
+test("submitted revisions do not invent a reason when the server omits it", () => {
+  for (const [reason, expected] of [
+    [null, "Revision 4 submitted ."],
+    ["vote", "Revision 4 submitted by vote ."],
+    ["deadline", "Revision 4 submitted at the deadline ."],
+  ]) {
+    const s = state();
+    s.board.submission.submitted_revision = 4;
+    s.board.submission.submitted_by = reason;
+    const render = harness("TeamVotePanel", "TeamVotePanel");
+    const status = nodes(render({ state: s })).find(
+      (n) => n.props?.role === "status" && text(n).includes("submitted")
+    );
+    assert.equal(text(status).replaceAll(/\s+/g, " ").trim(), expected);
+  }
+});
+
+test("server-confirmed current submission stops showing a pending deadline", () => {
+  const s = state();
+  s.board.submission.deadline = s.board.server_time;
+  s.board.submission.submitted_revision = 4;
+  s.board.submission.submitted_by = "deadline";
+  const render = harness("TeamVotePanel", "TeamVotePanel");
+  assert.doesNotMatch(text(render({ state: s })), /Waiting for server confirmation|Deadline in/);
+  s.board.submission.revision = 5;
+  assert.match(text(render({ state: s })), /Waiting for server confirmation/);
 });
