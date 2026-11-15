@@ -188,6 +188,90 @@ jobs:
       - name: Versions agree
         run: pnpm check:versions
 
+  team-round-ui:
+    # CI-07: the team-round UI harness (scripts/team-round-ui-verify.mjs) was
+    # committed but only ever run by hand, so nothing enforced it. This job
+    # runs every scene group against the production static export (the same
+    # `out/` Tauri ships), with mocked API routes and a Tauri stub. Any audit
+    # finding, page error, or unmocked API or invoke call fails the job.
+    runs-on: ubuntu-latest
+    name: Team round UI harness
+    timeout-minutes: 25
+    env:
+      PLAYWRIGHT_VERSION: 1.64.1
+      TEAM_UI_PORT: 3210
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
+
+      # Pinned and kept outside the workspace so the lockfile is untouched.
+      - name: Install Playwright and Chromium
+        run: |
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/pw" "playwright@$PLAYWRIGHT_VERSION"
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+
+      - name: Build the static export
+        run: pnpm --filter @ams/web build
+
+      - name: Serve the static export
+        run: |
+          nohup python3 -m http.server "$TEAM_UI_PORT" --bind 127.0.0.1 --directory apps/web/out \
+            > "$RUNNER_TEMP/team-ui-server.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/team-ui-server.pid"
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null "http://127.0.0.1:$TEAM_UI_PORT/session/contest/"; then
+              echo "server ready"; exit 0
+            fi
+            sleep 0.5
+          done
+          echo "static server did not become ready within 30s" >&2
+          cat "$RUNNER_TEMP/team-ui-server.log" >&2
+          exit 1
+
+      - name: Run every team-round scene
+        run: |
+          export PLAYWRIGHT_MODULE="$RUNNER_TEMP/pw/node_modules/playwright/index.mjs"
+          export CHROMIUM_PATH="$(cd "$RUNNER_TEMP/pw" && node -e 'console.log(require("playwright").chromium.executablePath())')"
+          export TEAM_UI_EVIDENCE_DIR="$RUNNER_TEMP/team-round-ui"
+          node scripts/team-round-ui-verify.mjs "http://127.0.0.1:$TEAM_UI_PORT" --all
+
+      - name: Stop the static server
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/team-ui-server.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/team-ui-server.pid")" 2>/dev/null || true
+          fi
+
+      # Always uploaded (screenshots plus report.json, a few MB); short
+      # retention keeps it cheap. On failure this is the evidence to read.
+      - name: Upload screenshots and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: team-round-ui-evidence
+          path: ${{ runner.temp }}/team-round-ui
+          if-no-files-found: warn
+          retention-days: 7
+
   bundle-smoke:
     # Packaging breakage only ever surfaced after a tag was pushed, which is
     # how v1.0.3, v1.0.4 and v1.1.0 all shipped broken: CI ran tests and never

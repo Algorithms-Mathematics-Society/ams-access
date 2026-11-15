@@ -1,6 +1,7 @@
 /** Team-round UI verification against the real contest page, fixtures only.
- * Run: start `next dev -p 3210` in apps/web, then
+ * Run: start `next dev -p 3210` in apps/web (or serve the `out/` static export, as CI does), then
  *   PLAYWRIGHT_MODULE=<playwright> node scripts/team-round-ui-verify.mjs http://127.0.0.1:3210 --file TeamLobby
+ * or pass `--all` instead of `--file` to run every scene group.
  * Each scene is audited for page overflow, unnamed or overlapping controls,
  * small targets, clipped text and WCAG AA contrast; screenshots go to a temp dir.
  * Entry follows the app's own path (stored session, setup handoff, POST
@@ -189,6 +190,7 @@ export async function openScene(
           invoke: (command, args) => {
             window.__invokes.push(command);
             if (command in answers) return Promise.resolve(answers[command]);
+            (window.__unknownInvokes ??= []).push(command);
             return new Promise(() => {});
           },
         },
@@ -1452,12 +1454,20 @@ export const SCENES = {
 };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const file = process.argv[process.argv.indexOf("--file") + 1];
-  const scenes = SCENES[file];
-  assert(scenes, `Pass --file with one of: ${Object.keys(SCENES).join(", ")}`);
+  // `--all` runs every scene group in one browser, which is what CI does.
+  const all = process.argv.includes("--all");
+  const only = process.argv[process.argv.indexOf("--file") + 1];
+  assert(
+    all || SCENES[only],
+    `Pass --all or --file with one of: ${Object.keys(SCENES).join(", ")}`
+  );
+  const groups = all ? Object.entries(SCENES) : [[only, SCENES[only]]];
+  const scenes = groups.flatMap(([file, list]) =>
+    list.map(([name, options]) => [file, name, options])
+  );
   const summary = [];
   try {
-    for (const [name, options] of scenes) {
+    for (const [file, name, options] of scenes) {
       if (options.team) {
         if (options.invalidProjection) assert.throws(() => parseTeamLobby(options.team));
         else parseTeamLobby(options.team);
@@ -1490,7 +1500,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         await page.getByText(options.expectText, { exact: true }).first().waitFor();
       await capture(page, `${file}-${name}`);
       const findings = await audit(page, "body");
-      summary.push({ scene: name, findings });
+      summary.push({ scene: `${file}/${name}`, findings });
       // An ordinary team dialog must return keyboard focus to its opener.
       const dialog = page.locator("dialog[open]");
       if (await dialog.count()) {
@@ -1508,6 +1518,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
           "Dialog did not restore focus"
         );
       }
+      for (const command of await page.evaluate(() => window.__unknownInvokes ?? []))
+        report.unknownInvoke.add(command);
       await context.close();
     }
   } catch (error) {
@@ -1520,6 +1532,22 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         `${findings.length ? "FINDINGS" : "CLEAN   "} ${scene}${findings.length ? "\n  - " + findings.join("\n  - ") : ""}`
       );
     if (report.unknownApi.size) console.log("UNKNOWN API", [...report.unknownApi].join(" | "));
+    // Native commands the stub leaves pending on purpose (background proctoring,
+    // telemetry, event wiring). Any other unanswered invoke is a new native
+    // dependency with no fixture, and fails the run like an unknown API call.
+    const pendingByDesign = new Set([
+      "configure_event_stream",
+      "count_monitors",
+      "get_battery_status",
+      "get_top_safe_inset",
+      "linux_voice_probe",
+      "log_proctoring_event",
+      "log_violation",
+      "plugin:event|listen",
+      "scan_processes",
+    ]);
+    const unknownInvoke = [...report.unknownInvoke].filter((c) => !pendingByDesign.has(c));
+    if (unknownInvoke.length) console.log("UNKNOWN INVOKE", unknownInvoke.join(" | "));
     // Resource errors are fixture responses (404 assets, injected 5xx); page exceptions still fail.
     const errors = report.errors.filter((e) => !/Failed to load resource/.test(e));
     if (errors.length) console.log("PAGE ERRORS\n" + errors.join("\n"));
@@ -1527,9 +1555,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       path.join(out, "report.json"),
       JSON.stringify(
         {
-          file,
+          file: all ? "all" : only,
           scenes: summary,
           unknownApi: [...report.unknownApi],
+          unknownInvoke,
           errors,
         },
         null,
@@ -1537,7 +1566,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       )
     );
     console.log("OUT", out);
-    if (errors.length || report.unknownApi.size || summary.some((s) => s.findings.length))
+    if (
+      errors.length ||
+      report.unknownApi.size ||
+      unknownInvoke.length ||
+      summary.some((s) => s.findings.length)
+    )
       process.exitCode = 1;
   }
 }
