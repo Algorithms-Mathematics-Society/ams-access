@@ -220,7 +220,13 @@ export function TeamLobby({
         </VStack>
       )}
       <VStack gap={0} className="team-lobby-feedback">
-        {state.error && <Text role="alert">{state.error}</Text>}
+        {/* A failed poll keeps the last good board: say it is stale, as the
+            no-board view does, since the voice panel may show other notices. */}
+        {state.status === "error" ? (
+          <Text role="status">{`${state.error ?? "Team status unavailable."} Reconnecting…`}</Text>
+        ) : (
+          state.error && <Text role="alert">{state.error}</Text>
+        )}
         {state.pending && <Text role="status">{pendingAction ?? "Updating your part…"}</Text>}
       </VStack>
       <List density="compact" hasDividers header={<Heading level={2}>Parts</Heading>}>
