@@ -58,9 +58,12 @@ const react = {
     return [
       slots[i],
       (v) => {
-        slots[i] = v;
+        slots[i] = typeof v === "function" ? v(slots[i]) : v;
       },
     ];
+  },
+  useMemo(fn) {
+    return fn();
   },
   useRef(initial) {
     const i = cursor++;
@@ -195,3 +198,33 @@ assert.equal(
   false,
   "sign-out clears the old identity's request error"
 );
+
+// Paging only changes the rendered slice of the already-loaded history.
+token = "next-session";
+epoch++;
+authListener();
+const history = Array.from({ length: 61 }, (_, i) => ({
+  ...run,
+  uid: `11111111-1111-1111-1111-${String(i).padStart(12, "0")}`,
+  revision: i + 1,
+}));
+resolveRequest(new Response(JSON.stringify(history)));
+await new Promise((r) => setImmediate(r));
+const pagingRequests = requests.length;
+const pager = () => nodes(render(true)).find((n) => n.type === "Pagination");
+assert.equal(nodes(render(true)).filter((n) => n.type === "ListItem").length, 25);
+pager().props.onChange(3);
+assert.equal(nodes(render(true)).filter((n) => n.type === "ListItem").length, 11);
+assert.equal(requests.length, pagingRequests, "paging makes no requests");
+nodes(render(true))
+  .find((n) => n.props?.label === "Refresh benchmarks")
+  .props.onClick();
+resolveRequest(new Response(JSON.stringify(history.slice(0, 30))));
+await new Promise((r) => setImmediate(r));
+assert.equal(pager().props.page, 2, "shrinking history clamps the current page");
+assert.equal(nodes(render(true)).filter((n) => n.type === "ListItem").length, 5);
+epoch++;
+authListener();
+resolveRequest(new Response(JSON.stringify(history)));
+await new Promise((r) => setImmediate(r));
+assert.equal(pager().props.page, 1, "identity changes reset pagination");

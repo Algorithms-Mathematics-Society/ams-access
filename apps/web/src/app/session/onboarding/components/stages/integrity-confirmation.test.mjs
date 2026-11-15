@@ -256,3 +256,78 @@ test("Mac advisory review preserves the exact warning without claiming entry is 
     "Your setup checks passed"
   );
 });
+
+function checkLineHarness(delay) {
+  let state;
+  let initialized = false;
+  let effect;
+  const timers = new Map();
+  const output = {};
+  new Function(
+    "require",
+    "exports",
+    "element",
+    "setTimeout",
+    "clearTimeout",
+    ts.transpileModule(readFileSync(new URL("../ui.tsx", import.meta.url), "utf8"), {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+        jsx: ts.JsxEmit.React,
+        jsxFactory: "element",
+      },
+    }).outputText
+  )(
+    (name) =>
+      name === "react"
+        ? {
+            useState(initial) {
+              if (!initialized) {
+                state = initial;
+                initialized = true;
+              }
+              return [
+                state,
+                (value) => {
+                  state = value;
+                },
+              ];
+            },
+            useEffect(callback) {
+              effect = callback;
+            },
+          }
+        : new Proxy({}, { get: (_, key) => key }),
+    output,
+    element,
+    (callback, ms) => {
+      timers.set(1, { callback, ms });
+      return 1;
+    },
+    (id) => timers.delete(id)
+  );
+  return {
+    timers,
+    render: () => output.CheckLine({ label: "Camera ready", status: "pass", delay }),
+    effect: () => effect(),
+  };
+}
+
+test("ordinary check rows exist on first render without scheduling a layout insertion", () => {
+  const h = checkLineHarness(undefined);
+  assert.ok(h.render());
+  h.effect();
+  assert.equal(h.timers.size, 0);
+});
+
+test("explicitly delayed check rows still wait and cancel their timer on unmount", () => {
+  const h = checkLineHarness(600);
+  assert.equal(h.render(), null);
+  const cleanup = h.effect();
+  const timer = h.timers.get(1);
+  assert.equal(timer.ms, 600);
+  timer.callback();
+  assert.ok(h.render());
+  cleanup();
+  assert.equal(h.timers.size, 0);
+});

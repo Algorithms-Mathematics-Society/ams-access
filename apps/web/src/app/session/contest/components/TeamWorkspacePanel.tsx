@@ -10,7 +10,10 @@ import { integrationPartStatus } from "@/lib/team-vote";
 import type { LobbyState } from "@/lib/team-lobby";
 import { TeamVotePanel } from "./TeamVotePanel";
 
-const TeamResultsView = dynamic(() => import("./TeamResultsView"), { ssr: false });
+const TeamResultsView = dynamic(() => import("./TeamResultsView"), {
+  ssr: false,
+  loading: () => <Text role="status">Opening team results…</Text>,
+});
 /** Reuses the owner's polled board; opening the panel performs no requests. */
 export default function TeamWorkspacePanel({
   state,

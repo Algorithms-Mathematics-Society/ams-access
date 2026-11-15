@@ -127,3 +127,178 @@ huge.stop();
 console.log(
   "Live board parsing, conditional updates, timeout/stop and stale identity tests passed"
 );
+
+// Run the component's actual hooks/handlers with the polling owner stubbed.
+const { readFileSync } = await import("node:fs");
+const ts = (await import("typescript")).default;
+const componentSource = readFileSync(
+  new URL("../app/session/contest/components/TeamLiveBoard.tsx", import.meta.url),
+  "utf8"
+);
+const slots = [],
+  effects = [],
+  pendingEffects = [],
+  pollers = [];
+let cursor = 0,
+  dirty = false,
+  epoch = 1,
+  authListener;
+const react = {
+  useState(initial) {
+    const i = cursor++;
+    if (!(i in slots)) slots[i] = initial;
+    return [
+      slots[i],
+      (update) => {
+        const next = typeof update === "function" ? update(slots[i]) : update;
+        if (!Object.is(next, slots[i])) {
+          slots[i] = next;
+          dirty = true;
+        }
+      },
+    ];
+  },
+  useRef(initial) {
+    const i = cursor++;
+    return (slots[i] ??= { current: initial });
+  },
+  useEffect(callback, deps) {
+    const i = cursor++;
+    if (!effects[i] || deps.some((value, index) => !Object.is(value, effects[i].deps[index]))) {
+      pendingEffects.push(() => {
+        effects[i]?.cleanup?.();
+        effects[i] = { deps, cleanup: callback() };
+      });
+    }
+  },
+};
+const output = {};
+const browser = { visibilityState: "visible", addEventListener() {}, removeEventListener() {} };
+new Function(
+  "require",
+  "exports",
+  "document",
+  ts.transpileModule(componentSource, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText
+)(
+  (name) => {
+    if (name === "react") return react;
+    if (name === "react/jsx-runtime")
+      return {
+        jsx: (type, props) => ({ type, props }),
+        jsxs: (type, props) => ({ type, props }),
+      };
+    if (name.includes("team-live-board"))
+      return {
+        startLiveBoardPolling(options) {
+          const poller = { ...options, stopped: false };
+          pollers.push(poller);
+          return () => {
+            poller.stopped = true;
+          };
+        },
+      };
+    if (name.includes("candidate-auth")) return { authHeaders: () => ({}) };
+    if (name.includes("proctor-api"))
+      return {
+        authGeneration: () => epoch,
+        subscribeAuthChanges: (callback) => {
+          authListener = callback;
+          return () => {};
+        },
+      };
+    if (name.includes("api-base")) return { resolveApiBase: () => "/api" };
+    return new Proxy({}, { get: (_, key) => String(key) });
+  },
+  output,
+  browser
+);
+let props = { contestUid: "first", ownTeamUid: "team-2700", visible: true };
+function renderBoard() {
+  let tree;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    dirty = false;
+    cursor = 0;
+    tree = output.default(props);
+    while (pendingEffects.length) pendingEffects.shift()();
+    if (!dirty) return tree;
+  }
+  assert.fail("component did not settle");
+}
+function nodes(node) {
+  if (Array.isArray(node)) return node.flatMap(nodes);
+  if (!node || typeof node !== "object") return [];
+  return [node, ...nodes(node.props?.children)];
+}
+function inspectBoard() {
+  const tree = nodes(renderBoard());
+  return {
+    rows: tree.filter((node) => node.type === "ListItem"),
+    pagination: tree.find((node) => node.type === "Pagination"),
+    jump: tree.find((node) => node.type === "Button" && node.props.label === "Show your team"),
+  };
+}
+const largeBoard = parseLiveBoard({
+  teams: Array.from({ length: 3000 }, (_, index) => ({
+    ...row,
+    uid: `team-${index}`,
+    name: `Team ${index}`,
+    rank: index + 1,
+  })),
+});
+assert.ok(largeBoard);
+renderBoard();
+assert.equal(pollers.length, 1);
+pollers[0].onState({ board: largeBoard, status: "ready" });
+let shown = inspectBoard();
+assert.equal(shown.rows.length, 50);
+assert.equal(shown.pagination.props.page, 1);
+assert.equal(shown.pagination.props.totalItems, 3000);
+const currentState = slots[0];
+dirty = false;
+pollers[0].onState({ board: largeBoard, status: "ready" });
+assert.equal(slots[0], currentState, "unchanged 304 state must preserve React state identity");
+assert.equal(dirty, false);
+pollers[0].onState({ board: largeBoard, status: "retrying" });
+assert.notEqual(slots[0], currentState, "status changes still render against unchanged data");
+shown.jump.props.onClick();
+shown = inspectBoard();
+assert.equal(shown.pagination.props.page, 55);
+assert.ok(shown.rows[0].props.label.props.children.includes("Your team"));
+assert.ok(shown.jump, "jump control stays mounted on the own-team page");
+assert.equal(pollers.length, 1, "local page changes must not restart polling");
+shown.pagination.props.onChange(60);
+assert.equal(inspectBoard().pagination.props.page, 60);
+pollers[0].onState({
+  board: { ...largeBoard, teams: largeBoard.teams.slice(0, 51) },
+  status: "ready",
+});
+shown = inspectBoard();
+assert.equal(shown.pagination.props.page, 2);
+assert.equal(shown.rows.length, 1);
+pollers[0].onState({ board: largeBoard, status: "ready" });
+assert.equal(inspectBoard().pagination.props.page, 2, "shrunk page is persisted when rows return");
+props = { ...props, contestUid: "second" };
+assert.equal(inspectBoard().rows.length, 0);
+assert.equal(pollers[0].stopped, true);
+assert.equal(pollers[0].isCurrent(), false);
+assert.equal(pollers.length, 2);
+pollers[1].onState({ board: largeBoard, status: "ready" });
+shown = inspectBoard();
+assert.equal(shown.pagination.props.page, 1, "new contest resets page");
+shown.jump.props.onClick();
+assert.equal(inspectBoard().pagination.props.page, 55);
+epoch++;
+authListener();
+shown = inspectBoard();
+assert.equal(shown.rows.length, 0);
+assert.equal(shown.pagination, undefined);
+assert.equal(slots[0].status, "denied");
+assert.equal(slots[1], 1, "auth change resets local page");
+assert.equal(pollers[1].stopped, true);
+assert.equal(pollers[1].isCurrent(), false);
+props = { ...props, visible: false };
+assert.equal(renderBoard(), null);
+assert.equal(pollers.length, 2, "hidden board does not start another request owner");
+console.log("Live board bounded rendering, own-team jump, identity bailout and auth reset pass");

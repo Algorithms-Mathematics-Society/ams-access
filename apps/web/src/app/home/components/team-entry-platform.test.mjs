@@ -52,7 +52,7 @@ function harness(result, platform = "Linux aarch64", native = true) {
 test("unsupported team is blocked before setup; unknown permits deliberate retry only", async () => {
   for (const result of ["team", "error", "defer", "wrong-contest"]) {
     const h = harness(result);
-    await h.run("contest");
+    assert.equal(await h.run("contest"), "blocked");
     assert.deepEqual(h.calls, ["probe"]);
     assert.equal(h.state.entryNavigationRef.current, false);
     await h.run("contest");
@@ -61,7 +61,7 @@ test("unsupported team is blocked before setup; unknown permits deliberate retry
 });
 test("solo proceeds after probe; supported native and browser entry unchanged", async () => {
   const solo = harness("solo");
-  await solo.run("contest");
+  assert.equal(await solo.run("contest"), "navigating");
   assert.deepEqual(solo.calls, ["probe", "clear", "attempt", "navigate"]);
   for (const [platform, native] of [
     ["Win32", true],
@@ -70,7 +70,7 @@ test("solo proceeds after probe; supported native and browser entry unchanged", 
     ["MacIntel", false],
   ]) {
     const h = harness("team", platform, native);
-    await h.run("contest");
+    assert.equal(await h.run("contest"), "navigating");
     assert.deepEqual(h.calls, ["clear", "attempt", "navigate"]);
   }
 });
@@ -78,11 +78,11 @@ test("inflight requests are single flight and stale identity never navigates", a
   let resolve;
   const h = harness(() => new Promise((r) => (resolve = r)));
   const pending = h.run("a");
-  await h.run("b");
+  assert.equal(await h.run("b"), "ignored");
   assert.deepEqual(h.calls, ["probe"]);
   h.changeIdentity();
   resolve("solo");
-  await pending;
+  assert.equal(await pending, "ignored");
   assert.deepEqual(h.calls, ["probe"]);
 });
 test("Home and readiness both expose compatibility notice", () => {

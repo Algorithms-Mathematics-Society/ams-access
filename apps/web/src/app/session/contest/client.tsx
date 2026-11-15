@@ -6,7 +6,7 @@ import { supportsTeamDesktopWebView } from "@/lib/team-platform";
 import { registerAllowedClipboard, resetAllowedClipboard } from "./clipboard-provenance";
 
 import { formatSource } from "./format-code";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, LazyMotion, domAnimation, m, useReducedMotion } from "framer-motion";
 
 import { HelpRequestModal } from "@/components/HelpRequestModal";
 import { ContestSponsor } from "@/components/ContestSponsor";
@@ -387,7 +387,7 @@ async function attachVideoStream(video: HTMLVideoElement, stream: MediaStream): 
   }
 }
 
-const RecoveryBannerRegion = motion.create(VStack);
+const RecoveryBannerRegion = m.create(VStack);
 
 export default function ContestPageClient() {
   const reduceMotion = useReducedMotion();
@@ -797,6 +797,7 @@ export default function ContestPageClient() {
   // of it: swapping it in would unmount the editor, and an unmounted
   // CodeMirror is unsaved code waiting to be lost.
   const [referenceOpen, setReferenceOpen] = useState(false);
+  const closeReference = useCallback(() => setReferenceOpen(false), []);
   const [lockGraceActive, setLockGraceActive] = useState(false);
   const [lockGraceCountdown, setLockGraceCountdown] = useState(3);
   const [cameraCollapsed, setCameraCollapsed] = useState(true);
@@ -1152,13 +1153,9 @@ export default function ContestPageClient() {
     return () => clearInterval(interval);
   }, [submissionsList, fetchSubmissions]);
 
-  const toggleExpandAttempt = (attemptId: string) => {
-    if (expandedAttemptId === attemptId) {
-      setExpandedAttemptId(null);
-    } else {
-      setExpandedAttemptId(attemptId);
-    }
-  };
+  const toggleExpandAttempt = useCallback((attemptId: string) => {
+    setExpandedAttemptId((current) => (current === attemptId ? null : attemptId));
+  }, []);
 
   const prevSubmissionsRef = useRef<SubmissionAttemptRecord[]>([]);
   useEffect(() => {
@@ -5433,32 +5430,34 @@ export default function ContestPageClient() {
                     background: "var(--color-background-body)",
                   }}
                 >
-                  <AnimatePresence initial={false}>
-                    {showRecoveryBanner && (
-                      <RecoveryBannerRegion
-                        key={`recovery-${currentQId}`}
-                        gap={0}
-                        initial={false}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{
-                          height: { duration: reduceMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] },
-                          opacity: { duration: reduceMotion ? 0 : 0.12 },
-                        }}
-                        style={{ overflow: "hidden", flexShrink: 0 }}
-                      >
-                        <Banner
-                          status="info"
-                          container="section"
-                          title="Draft restored from this device"
-                          description={`Review the recovered code. ${activeDraftStatus.confirmed ? "It is saved on this device." : "Your latest changes are not yet saved on this device."}`}
-                          isDismissable
-                          onDismiss={() =>
-                            setDismissedRecoveryQuestions((prev) => [...prev, currentQId])
-                          }
-                        />
-                      </RecoveryBannerRegion>
-                    )}
-                  </AnimatePresence>
+                  <LazyMotion features={domAnimation} strict>
+                    <AnimatePresence initial={false}>
+                      {showRecoveryBanner && (
+                        <RecoveryBannerRegion
+                          key={`recovery-${currentQId}`}
+                          gap={0}
+                          initial={false}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{
+                            height: { duration: reduceMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] },
+                            opacity: { duration: reduceMotion ? 0 : 0.12 },
+                          }}
+                          style={{ overflow: "hidden", flexShrink: 0 }}
+                        >
+                          <Banner
+                            status="info"
+                            container="section"
+                            title="Draft restored from this device"
+                            description={`Review the recovered code. ${activeDraftStatus.confirmed ? "It is saved on this device." : "Your latest changes are not yet saved on this device."}`}
+                            isDismissable
+                            onDismiss={() =>
+                              setDismissedRecoveryQuestions((prev) => [...prev, currentQId])
+                            }
+                          />
+                        </RecoveryBannerRegion>
+                      )}
+                    </AnimatePresence>
+                  </LazyMotion>
                   {!networkOverlayActive && (!browserOnline || connection !== "online") && (
                     <Banner
                       status="warning"
@@ -5597,7 +5596,7 @@ export default function ContestPageClient() {
                       minWidth: 0,
                     }}
                   >
-                    <ReferencePanel onClose={() => setReferenceOpen(false)} />
+                    <ReferencePanel onClose={closeReference} />
                   </VStack>
                 )}
               </HStack>

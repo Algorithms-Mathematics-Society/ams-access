@@ -156,8 +156,22 @@ export function ResultsPanel({
   const [selected, setSelected] = useState(0);
 
   // Left/right along the strip, the way a tab list is expected to behave.
-  const move = (delta: number) =>
-    setSelected((current) => Math.min(Math.max(current + delta, 0), rows.length - 1));
+  const move = (delta: number, strip: HTMLDivElement) => {
+    const next = Math.min(Math.max(selected + delta, 0), rows.length - 1);
+    if (next < 0) return;
+    setSelected(next);
+    const chip = strip.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next];
+    if (!chip) return;
+    // Only the candidate's arrow keys move focus. Judge refreshes never do.
+    chip.focus({ preventScroll: true });
+    const bounds = strip.getBoundingClientRect();
+    const target = chip.getBoundingClientRect();
+    const left = bounds.left + strip.clientLeft;
+    const right = left + strip.clientWidth;
+    // Scroll only this horizontal strip, never the output pane or workspace.
+    if (target.left < left) strip.scrollLeft += target.left - left;
+    else if (target.right > right) strip.scrollLeft += target.right - right;
+  };
 
   // Land on the first failure, which is the one being looked for. Re-run with
   // everything passing and it falls back to the first case rather than
@@ -317,10 +331,10 @@ export function ResultsPanel({
               onKeyDown={(event) => {
                 if (event.key === "ArrowRight") {
                   event.preventDefault();
-                  move(1);
+                  move(1, event.currentTarget);
                 } else if (event.key === "ArrowLeft") {
                   event.preventDefault();
-                  move(-1);
+                  move(-1, event.currentTarget);
                 }
               }}
               style={{

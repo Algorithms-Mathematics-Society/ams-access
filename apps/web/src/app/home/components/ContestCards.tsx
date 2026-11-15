@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, memo } from "react";
+import { useState, useEffect, useMemo, useRef, memo } from "react";
 import { dateTimeFormatter } from "@/lib/date-time-format";
 import { serverNow } from "@/lib/proctor-api";
 import { useRouter } from "next/navigation";
@@ -17,7 +17,7 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 import { Button as AstryxButton } from "@astryxdesign/core/Button";
 import { Token } from "@astryxdesign/core/Token";
 import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
-import type { InvitedContest, ContestantReadinessContext } from "./types";
+import type { InvitedContest, ContestantReadinessContext, HomeEntryOutcome } from "./types";
 import { ContestBriefing } from "./ContestBriefing";
 import { ContestSponsor } from "@/components/ContestSponsor";
 
@@ -254,7 +254,7 @@ export const ActiveContestCard = memo(
     isHighlighted = false,
   }: {
     c: InvitedContest;
-    onPreflight: (contestId: string, type: "new" | "resume") => void;
+    onPreflight: (contestId: string, type: "new" | "resume") => Promise<HomeEntryOutcome>;
     theme: "dark" | "light";
     col: { dot: string; bg: string; border: string };
     readinessContext?: ContestantReadinessContext;
@@ -263,6 +263,33 @@ export const ActiveContestCard = memo(
     const router = useRouter();
     const [now, setNow] = useState(() => serverNow());
     const [entering, setEntering] = useState(false);
+    const entryAttempt = useRef(0);
+    const entryBusy = useRef(false);
+    useEffect(() => {
+      entryBusy.current = false;
+      setEntering(false);
+      return () => {
+        entryAttempt.current++;
+        entryBusy.current = false;
+      };
+    }, [c.id]);
+
+    async function enterContest() {
+      if (entryBusy.current) return;
+      entryBusy.current = true;
+      const attempt = ++entryAttempt.current;
+      setEntering(true);
+      try {
+        const outcome = await onPreflight(c.id, entryState.sessionType);
+        if (entryAttempt.current !== attempt || outcome === "navigating") return;
+      } catch {
+        // Entry owns its error presentation; release this row for a deliberate retry.
+        if (entryAttempt.current !== attempt) return;
+      }
+      entryBusy.current = false;
+      setEntering(false);
+    }
+
     const entryState = useMemo(() => getContestEntryState(c, now), [c, now]);
     const canEnter = entryState.canEnter;
 
@@ -442,14 +469,7 @@ export const ActiveContestCard = memo(
                 // was both redundant and an invitation to change it.
                 router.push(`/results?contestId=${encodeURIComponent(c.id)}`);
               } else if (canEnter) {
-                setEntering(true);
-                try {
-                  onPreflight(c.id, entryState.sessionType);
-                } finally {
-                  // onPreflight is async-like (navigates away); reset only if still mounted.
-                  // Use a short timeout so the spinner shows during navigation.
-                  setTimeout(() => setEntering(false), 5000);
-                }
+                void enterContest();
               }
             }}
             label={

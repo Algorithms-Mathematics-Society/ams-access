@@ -556,6 +556,81 @@ const voiceScene = (click, options = {}) => ({
   click,
   ...options,
 });
+// Exercise actual tab stops and Enter activation, without invoking React handlers.
+async function keyboardActivate(page, control) {
+  await control.waitFor({ state: "visible" });
+  for (let tabs = 0; tabs < 120; tabs++) {
+    if (await control.evaluate((element) => element === document.activeElement)) {
+      await page.keyboard.press("Enter");
+      return;
+    }
+    await page.keyboard.press("Tab");
+  }
+  assert.fail("Pagination control was not reachable by keyboard");
+}
+const largeHistory = Array.from({ length: 61 }, (_, index) => ({
+  ...benchmarkRun,
+  uid: `11111111-1111-1111-1111-${String(index).padStart(12, "0")}`,
+  revision: 61 - index,
+  has_profile: false,
+}));
+const largeStandings = {
+  teams: Array.from({ length: 121 }, (_, index) => ({
+    uid: index === 110 ? "team-1" : `other-team-${index}`,
+    name: `Pagination team ${index + 1}`,
+    rank: index + 1,
+    score: 121 - index,
+    solved: 1,
+    integration_passed: true,
+  })),
+};
+async function verifyBenchmarkPaging({ page }) {
+  const pager = page.getByRole("navigation", { name: "Benchmark history pages" });
+  const rows = page.getByText(/^Revision \d+ · Measured$/, { exact: true });
+  await pager.waitFor();
+  assert.equal(await rows.count(), 25);
+  assert.equal(await page.getByText("Revision 61 · Measured", { exact: true }).count(), 1);
+  await keyboardActivate(page, pager.getByRole("button", { name: "Go to next page", exact: true }));
+  await page.getByText("Revision 36 · Measured", { exact: true }).waitFor();
+  assert.equal(await rows.count(), 25);
+  await keyboardActivate(page, pager.getByRole("button", { name: "Go to next page", exact: true }));
+  await page.getByText("Revision 11 · Measured", { exact: true }).waitFor();
+  assert.equal(await rows.count(), 11);
+  assert.equal(
+    await pager.getByRole("button", { name: "Go to next page", exact: true }).isDisabled(),
+    true
+  );
+  await keyboardActivate(
+    page,
+    pager.getByRole("button", { name: "Go to previous page", exact: true })
+  );
+  await page.getByText("Revision 36 · Measured", { exact: true }).waitFor();
+  assert.equal(await rows.count(), 25);
+  await pager.scrollIntoViewIfNeeded();
+}
+async function verifyLiveBoardPaging({ page }) {
+  const pager = page.getByRole("navigation", { name: "Live team standings pages" });
+  const rows = page.getByText(/^\d+\. Pagination team \d+( · Your team)?$/, { exact: true });
+  await pager.waitFor();
+  assert.equal(await rows.count(), 50);
+  await keyboardActivate(page, pager.getByRole("button", { name: "Go to next page", exact: true }));
+  await page.getByText("51. Pagination team 51", { exact: true }).waitFor();
+  assert.equal(await rows.count(), 50);
+  await keyboardActivate(page, page.getByRole("button", { name: "Show your team", exact: true }));
+  await page.getByText("111. Pagination team 111 · Your team", { exact: true }).waitFor();
+  assert.equal(await rows.count(), 21);
+  assert.equal(
+    await pager.getByRole("button", { name: "Go to next page", exact: true }).isDisabled(),
+    true
+  );
+  await keyboardActivate(
+    page,
+    pager.getByRole("button", { name: "Go to previous page", exact: true })
+  );
+  await page.getByText("51. Pagination team 51", { exact: true }).waitFor();
+  assert.equal(await rows.count(), 50);
+  await pager.scrollIntoViewIfNeeded();
+}
 export const SCENES = {
   VoiceEndedNotice: [
     [
@@ -637,6 +712,14 @@ export const SCENES = {
   ],
 
   TeamLiveBoard: [
+    ["large-keyboard", liveScene(largeStandings, 200, { after: verifyLiveBoardPaging })],
+    [
+      "large-keyboard-narrow",
+      liveScene(largeStandings, 200, {
+        resize: { width: 390, height: 640 },
+        after: verifyLiveBoardPaging,
+      }),
+    ],
     [
       "narrow-long-names",
       liveScene(
@@ -679,6 +762,14 @@ export const SCENES = {
     ["retrying", liveScene({}, 503)],
   ],
   TeamBenchmarks: [
+    ["large-keyboard", benchmarkScene(largeHistory, 200, { after: verifyBenchmarkPaging })],
+    [
+      "large-keyboard-narrow",
+      benchmarkScene(largeHistory, 200, {
+        resize: { width: 390, height: 640 },
+        after: verifyBenchmarkPaging,
+      }),
+    ],
     [
       "flamegraph",
       benchmarkScene([benchmarkRun], 200, {

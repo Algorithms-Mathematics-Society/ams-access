@@ -2,7 +2,7 @@
 
 /** Own submissions only, using the same endpoint/verdicts as the contest room.
  * This is not a leaderboard or an organizer's published final score. */
-import { useCallback, useEffect, useRef, useState, Suspense } from "react";
+import { useCallback, useEffect, useRef, useState, memo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { Banner } from "@astryxdesign/core/Banner";
@@ -92,12 +92,18 @@ function ResultsView({ contestId }: { contestId: string }) {
       ]);
       if (version !== requestVersion.current) return;
       const attempts = toAttemptRecords(submissions);
+      const attemptsByProblem = new Map<string, AttemptRecord[]>();
+      for (const attempt of attempts) {
+        const group = attemptsByProblem.get(attempt.problem_id);
+        if (group) group.push(attempt);
+        else attemptsByProblem.set(attempt.problem_id, [attempt]);
+      }
       setContestTitle(index.title);
       setRows(
         index.problems.map((problem) => ({
           label: problem.label,
           title: problem.title,
-          attempts: attempts.filter((attempt) => attempt.problem_id === problem.label),
+          attempts: attemptsByProblem.get(problem.label) ?? [],
         }))
       );
       setUpdatedAt(new Date());
@@ -256,7 +262,7 @@ function AttemptSummary({ attempt }: { attempt: AttemptRecord }) {
   );
 }
 
-function ProblemResult({ row }: { row: ProblemRow }) {
+const ProblemResult = memo(function ProblemResult({ row }: { row: ProblemRow }) {
   const [latest, ...earlier] = row.attempts;
   return (
     <Section variant="transparent" padding={0} paddingBlock={5} dividers={["bottom"]}>
@@ -293,7 +299,7 @@ function ProblemResult({ row }: { row: ProblemRow }) {
       </VStack>
     </Section>
   );
-}
+});
 
 function ResultsRoute() {
   const searchParams = useSearchParams();

@@ -1,10 +1,11 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { VStack, HStack } from "@astryxdesign/core/Stack";
 import { Heading } from "@astryxdesign/core/Heading";
 import { Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { List, ListItem } from "@astryxdesign/core/List";
+import { Pagination } from "@astryxdesign/core/Pagination";
 import { CodeBlock } from "@astryxdesign/core/CodeBlock";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { authGeneration, subscribeAuthChanges } from "@/lib/proctor-api";
@@ -20,6 +21,7 @@ import {
 const ns = (n: number | null) => (n === null ? "unavailable" : `${n.toLocaleString()} ns`);
 // WKWebView sends <a download href="blob:"> through the navigation guard,
 // which refuses it, so on macOS the folded stacks are shown in the app instead.
+const PAGE_SIZE = 25;
 const STACKS_PREVIEW_BYTES = 256 * 1024;
 // navigator.platform, not the user agent: the desktop app sets its own user agent.
 const inAppStacks = () => typeof navigator !== "undefined" && /^Mac/.test(navigator.platform);
@@ -42,6 +44,7 @@ export function TeamBenchmarks({
       null
     ),
     [truncated, setTruncated] = useState(false);
+  const [page, setPage] = useState(1);
   const flight = useRef<AbortController | null>(null),
     objectUrl = useRef<string | null>(null),
     epoch = useRef(0),
@@ -153,6 +156,7 @@ export function TeamBenchmarks({
   useEffect(() => {
     epoch.current++;
     setRuns([]);
+    setPage(1);
     setLoaded(false);
     setError(null);
     clearProfile();
@@ -166,6 +170,7 @@ export function TeamBenchmarks({
       setBusy(false);
       setError(null);
       setRuns([]);
+      setPage(1);
       setLoaded(false);
       setTruncated(false);
       clearProfile();
@@ -189,9 +194,16 @@ export function TeamBenchmarks({
     // The effect owns the contest/visibility lifecycle; actions read the current identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contestUid, visible, apiBase]);
+  const { trend, max } = useMemo(() => {
+    const trend = benchmarkTrend(runs).slice(-30);
+    return { trend, max: Math.max(1, ...trend.map((r) => r.median!)) };
+  }, [runs]);
+  const pageCount = Math.max(1, Math.ceil(runs.length / PAGE_SIZE));
+  const shownPage = Math.min(page, pageCount);
+  useEffect(() => {
+    setPage((previous) => Math.min(previous, pageCount));
+  }, [pageCount]);
   if (!visible) return null;
-  const trend = benchmarkTrend(runs).slice(-30),
-    max = Math.max(1, ...trend.map((r) => r.median!));
   return (
     <VStack gap={3}>
       <HStack gap={2} align="center" wrap="wrap">
@@ -261,7 +273,7 @@ export function TeamBenchmarks({
         </Text>
       )}
       <List>
-        {runs.map((run) => (
+        {runs.slice((shownPage - 1) * PAGE_SIZE, shownPage * PAGE_SIZE).map((run) => (
           <ListItem
             key={run.uid}
             label={`Revision ${run.revision} · ${benchmarkStatus(run)}`}
@@ -328,6 +340,17 @@ export function TeamBenchmarks({
           />
         ))}
       </List>
+      {pageCount > 1 && (
+        <Pagination
+          label="Benchmark history pages"
+          page={shownPage}
+          onChange={setPage}
+          totalItems={runs.length}
+          pageSize={PAGE_SIZE}
+          variant="count"
+          size="sm"
+        />
+      )}
       {profile && (
         <VStack gap={2}>
           <Heading level={4}>Flamegraph · revision {profile.revision}</Heading>

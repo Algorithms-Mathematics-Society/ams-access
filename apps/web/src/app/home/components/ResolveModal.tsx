@@ -333,11 +333,18 @@ export function ResolveModal({
     };
     const text = JSON.stringify(payload, null, 2);
     try {
-      await navigator.clipboard?.writeText(text);
+      setCopied(false);
+      setActionNotice(null);
+      if (!navigator.clipboard?.writeText) {
+        setActionNotice("Clipboard access is unavailable. Select and copy the details manually.");
+        return;
+      }
+      await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     } catch {
       setCopied(false);
+      setActionNotice("Clipboard access was denied. Select and copy the details manually.");
     }
   }
 

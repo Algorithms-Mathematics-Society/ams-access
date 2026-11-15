@@ -192,3 +192,5 @@ export type CloseAppsResult = {
   closed: string[];
   failed: string[];
 };
+
+export type HomeEntryOutcome = "blocked" | "navigating" | "ignored";

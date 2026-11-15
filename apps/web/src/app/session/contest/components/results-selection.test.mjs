@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
-import { candidateCheckFailed } from "../result-summary.ts";
+import { candidateCheckFailed, resultSummary } from "../result-summary.ts";
 import { mergeAttemptTestResults } from "../attempt-adapter.ts";
 
 const { outputText } = ts.transpileModule(
@@ -19,7 +19,8 @@ const { outputText } = ts.transpileModule(
 // Observe the real panel's selection effect, using its loading branch to avoid
 // unrelated rendering. This also covers selection changes as results arrive.
 function harness() {
-  let selected, dependencies, effect;
+  let selected, dependencies, effect, tree;
+  const jsx = (type, props) => ({ type, props });
   const context = {
     exports: {},
     require(name) {
@@ -29,7 +30,7 @@ function harness() {
           useState: (initial) => [
             (selected ??= initial),
             (value) => {
-              selected = value;
+              selected = typeof value === "function" ? value(selected) : value;
             },
           ],
           useEffect: (fn, next) => {
@@ -38,9 +39,10 @@ function harness() {
             dependencies = next;
           },
         };
-      if (name === "react/jsx-runtime") return { jsx: () => null, jsxs: () => null };
-      if (name === "../result-summary") return { candidateCheckFailed };
-      if (name === "../sample-join") return { sampleOrdinals: () => [] };
+      if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
+      if (name === "../result-summary") return { candidateCheckFailed, resultSummary };
+      if (name === "../sample-join")
+        return { sampleOrdinals: () => [], exampleFor: () => undefined };
       if (name === "../family-summary") return { GATE_KIND: "symbolic" };
       return {};
     },
@@ -50,9 +52,17 @@ function harness() {
     choose: (index) => {
       selected = index;
     },
-    render(tests) {
+    strip() {
+      const visit = (node) => {
+        if (!node || typeof node !== "object") return undefined;
+        if (Array.isArray(node)) return node.map(visit).find(Boolean);
+        return node.props?.role === "tablist" ? node : visit(node.props?.children);
+      };
+      return visit(tree)?.props;
+    },
+    render(tests, isRunning = true) {
       effect = undefined;
-      context.exports.ResultsPanel({ tests, isRunning: true, emptyHint: "" });
+      tree = context.exports.ResultsPanel({ tests, isRunning, emptyHint: "", verdict: "WA" });
       effect?.();
       return selected;
     },
@@ -91,4 +101,52 @@ test("shorter results and pending-to-terminal results initialize a valid case", 
   assert.equal(h.render(shortened.a), 0);
   assert.equal(h.render([]), 0);
   assert.equal(h.render(rows()), 1);
+});
+
+test("case arrows focus and reveal only the case strip; refreshed results do not move focus", () => {
+  const h = harness();
+  const tests = rows();
+  h.render(tests, false);
+  h.choose(0);
+  h.render(tests, false);
+  const focused = [];
+  const chips = Array.from({ length: tests.length }, (_, index) => ({
+    focus(options) {
+      focused.push({ index, preventScroll: options.preventScroll });
+    },
+    getBoundingClientRect: () => ({
+      left: 100 + index * 100 - strip.scrollLeft,
+      right: 200 + index * 100 - strip.scrollLeft,
+    }),
+  }));
+  const strip = {
+    scrollLeft: 0,
+    clientLeft: 0,
+    clientWidth: 150,
+    getBoundingClientRect: () => ({ left: 100 }),
+    querySelectorAll: () => chips,
+  };
+  let prevented = 0;
+  const key = (key) =>
+    h.strip().onKeyDown({
+      key,
+      currentTarget: strip,
+      preventDefault() {
+        prevented++;
+      },
+    });
+  key("ArrowRight");
+  assert.equal(h.render(tests, false), 1);
+  assert.equal(strip.scrollLeft, 50);
+  assert.deepEqual(focused, [{ index: 1, preventScroll: true }]);
+  key("ArrowLeft");
+  assert.equal(h.render(tests, false), 0);
+  assert.equal(strip.scrollLeft, 0);
+  key("ArrowLeft");
+  assert.equal(h.render(tests, false), 0);
+  assert.equal(strip.scrollLeft, 0);
+  const focusCount = focused.length;
+  h.render(rows(), false);
+  assert.equal(focused.length, focusCount);
+  assert.equal(prevented, 3);
 });

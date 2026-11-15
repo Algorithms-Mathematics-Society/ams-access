@@ -13,7 +13,7 @@ import { ActiveContestCard } from "./ContestCards";
 import { serverNow } from "@/lib/proctor-api";
 import { getContestEntryState, getScheduledContestTickDelay } from "./utils";
 import { sortHomeContests } from "./home-contest-presentation";
-import type { InvitedContest, ContestantReadinessContext } from "./types";
+import type { InvitedContest, ContestantReadinessContext, HomeEntryOutcome } from "./types";
 
 const contestColors = {
   dot: "var(--color-success)",
@@ -37,7 +37,7 @@ export const ContestsPanel = memo(function ContestsPanel({
   contests: InvitedContest[];
   loading: boolean;
   theme: "dark" | "light";
-  onPreflight: (contestId: string, type: "new" | "resume") => void;
+  onPreflight: (contestId: string, type: "new" | "resume") => Promise<HomeEntryOutcome>;
   readinessContext?: ContestantReadinessContext;
   searchQuery?: string;
   onSearchChange: (value: string) => void;

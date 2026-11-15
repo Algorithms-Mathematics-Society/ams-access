@@ -3,9 +3,13 @@ import { VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import type { TeamLobbyBoard } from "@/lib/team-lobby";
 import { TeamIntegrationResult } from "./TeamIntegrationResult";
-const TeamLiveBoard = dynamic(() => import("./TeamLiveBoard"), { ssr: false });
+const TeamLiveBoard = dynamic(() => import("./TeamLiveBoard"), {
+  ssr: false,
+  loading: () => <Text role="status">Opening live board…</Text>,
+});
 const TeamBenchmarks = dynamic(() => import("./TeamBenchmarks").then((m) => m.TeamBenchmarks), {
   ssr: false,
+  loading: () => <Text role="status">Opening benchmarks…</Text>,
 });
 export default function TeamResultsView({
   contestUid,

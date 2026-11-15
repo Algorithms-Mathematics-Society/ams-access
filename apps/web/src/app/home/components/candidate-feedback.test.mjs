@@ -325,3 +325,139 @@ test("declined and expired decisions retain help independently of message wordin
     }
   }
 });
+
+function entryFeedbackHarness(onPreflight) {
+  const updates = [];
+  const bindings = {
+    entryAttempt: { current: 0 },
+    entryBusy: { current: false },
+    setEntering: (value) => updates.push(value),
+    onPreflight,
+    c: { id: "contest" },
+    entryState: { sessionType: "new" },
+  };
+  const { enterContest } = extract("./ContestCards.tsx", ["enterContest"], bindings);
+  // Run the component's actual lifecycle effect and its cleanup.
+  const source = readFileSync(new URL("./ContestCards.tsx", import.meta.url), "utf8");
+  const ast = ts.createSourceFile(
+    "card.tsx",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  );
+  let lifecycle;
+  function visit(node) {
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.getText(ast) === "useEffect" &&
+      node.arguments[0].getText(ast).includes("entryAttempt.current++")
+    )
+      lifecycle = node.arguments[0].getText(ast);
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  assert.ok(lifecycle);
+  const mount = new Function(...Object.keys(bindings), `return (${lifecycle})();`);
+  const cleanup = mount(...Object.values(bindings));
+  updates.length = 0;
+  return { enterContest, updates, cleanup, bindings };
+}
+
+test("contest row stays pending until entry resolves, prevents duplicate activation, and retries blocked or ignored outcomes", async () => {
+  for (const outcome of ["blocked", "ignored"]) {
+    let resolve;
+    let calls = 0;
+    const h = entryFeedbackHarness(() => {
+      calls++;
+      return new Promise((r) => {
+        resolve = r;
+      });
+    });
+    const pending = h.enterContest();
+    await h.enterContest();
+    assert.equal(calls, 1);
+    assert.deepEqual(h.updates, [true]);
+    resolve(outcome);
+    await pending;
+    assert.deepEqual(h.updates, [true, false]);
+    const retry = h.enterContest();
+    assert.equal(calls, 2);
+    resolve("blocked");
+    await retry;
+    h.cleanup();
+  }
+});
+
+test("successful contest navigation keeps pending feedback and rejection releases retry", async () => {
+  const navigating = entryFeedbackHarness(async () => "navigating");
+  await navigating.enterContest();
+  assert.deepEqual(navigating.updates, [true]);
+  assert.equal(navigating.bindings.entryBusy.current, true);
+  navigating.cleanup();
+  const rejected = entryFeedbackHarness(async () => {
+    throw Error("failed");
+  });
+  await rejected.enterContest();
+  assert.deepEqual(rejected.updates, [true, false]);
+  assert.equal(rejected.bindings.entryBusy.current, false);
+  rejected.cleanup();
+});
+
+test("late contest entry completion cannot update an unmounted row or clear a newer attempt", async () => {
+  const resolvers = [];
+  const h = entryFeedbackHarness(() => new Promise((resolve) => resolvers.push(resolve)));
+  const old = h.enterContest();
+  h.cleanup();
+  resolvers.shift()("blocked");
+  await old;
+  assert.deepEqual(h.updates, [true]);
+  const previous = h.enterContest();
+  h.cleanup();
+  const current = h.enterContest();
+  const count = h.updates.length;
+  resolvers.shift()("blocked");
+  await previous;
+  assert.equal(h.updates.length, count);
+  assert.equal(h.bindings.entryBusy.current, true);
+  resolvers.shift()("blocked");
+  await current;
+  assert.equal(h.updates.at(-1), false);
+});
+
+test("resolve support copy reports unavailable or denied clipboard and only acknowledges a completed write", async () => {
+  for (const mode of ["missing", "denied", "success"]) {
+    const state = {};
+    let complete;
+    const clipboard =
+      mode === "missing"
+        ? undefined
+        : {
+            writeText: () =>
+              mode === "denied"
+                ? Promise.reject(Error("denied"))
+                : new Promise((r) => {
+                    complete = r;
+                  }),
+          };
+    const { copySupportDetails } = extract("./ResolveModal.tsx", ["copySupportDetails"], {
+      navigator: { clipboard },
+      activeCheckKey: "camera",
+      activeFlow: { title: "Camera", problem: "Unavailable", details: [] },
+      setCopied: (value) => {
+        state.copied = value;
+      },
+      setActionNotice: (value) => {
+        state.notice = value;
+      },
+      setTimeout: () => 1,
+    });
+    const pending = copySupportDetails();
+    assert.equal(state.copied, false);
+    if (mode === "success") complete();
+    await pending;
+    assert.equal(state.copied, mode === "success");
+    if (mode !== "success")
+      assert.match(state.notice, mode === "missing" ? /unavailable/ : /denied/);
+  }
+});
