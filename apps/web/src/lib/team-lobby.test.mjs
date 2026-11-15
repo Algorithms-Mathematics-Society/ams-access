@@ -1161,3 +1161,234 @@ test("Ready never requests unsupported, unchosen, expired, unavailable or locked
     controller.stop();
   }
 });
+
+// Edge cases for the 1 Dec team round: flaky campus networks and phase races.
+// Stopped after every test, so a failing assertion cannot leave live poll timers.
+const live = new Set();
+test.afterEach(() => {
+  for (const controller of live) controller.stop();
+  live.clear();
+});
+const lobby = (request, extra = {}) => {
+  const box = { state: null };
+  const controller = createTeamLobbyController({
+    apiBase: "https://example.test",
+    contestUid: "contest",
+    headers: () => ({}),
+    hidden: () => false,
+    onState: (s) => (box.state = s),
+    request,
+    ...extra,
+  });
+  live.add(controller);
+  return { box, controller };
+};
+// What fetch rejects with when there is no HTTP response at all, per engine.
+const offline = [
+  new TypeError("Failed to fetch"),
+  new TypeError("Load failed"),
+  new TypeError("NetworkError when attempting to fetch resource."),
+];
+
+test("offline first poll explains the server is unreachable instead of raw fetch text", async () => {
+  for (const failure of offline) {
+    const { box, controller } = lobby(async () => {
+      throw failure;
+    });
+    await flush();
+    assert.equal(box.state.status, "error");
+    assert.equal(box.state.board, null);
+    assert.equal(box.state.error, "Cannot reach the exam server.");
+    controller.stop();
+  }
+});
+
+test("a poll outage keeps the last good board, then recovery clears the error", async () => {
+  for (const fail of [
+    () => Response.json({ detail: "Team service is restarting." }, { status: 503 }),
+    () => Promise.reject(new TypeError("Failed to fetch")),
+    () => new Response("<html>Campus Wi-Fi sign-in</html>", { status: 200 }),
+  ]) {
+    let mode = "ok",
+      posts = 0;
+    const { box, controller } = lobby(async (_url, init) => {
+      if (init.method !== "GET") posts++;
+      return mode === "ok" ? Response.json(board()) : fail();
+    });
+    await flush();
+    assert.equal(box.state.status, "team");
+    mode = "fail";
+    controller.refresh();
+    await flush();
+    await flush();
+    assert.equal(box.state.status, "error");
+    assert.equal(box.state.board.team.name, "Team 1", "stale board is retained");
+    assert.doesNotMatch(box.state.error, /Failed to fetch|Load failed|NetworkError/);
+    // Claims are not sent from a stale board.
+    const counted = box.state;
+    controller.claim("1");
+    assert.equal(box.state, counted, "no request and no state change");
+    mode = "ok";
+    controller.refresh();
+    await flush();
+    await flush();
+    assert.equal(box.state.status, "team");
+    assert.equal(box.state.error, null);
+    assert.equal(posts, 0);
+    controller.stop();
+  }
+});
+
+test("an offline claim never shows raw fetch text and leaves the board authoritative", async () => {
+  let calls = 0;
+  const { box, controller } = lobby(async (_url, init) => {
+    calls++;
+    if (init.method === "POST") throw new TypeError("Load failed");
+    return Response.json(board());
+  });
+  await flush();
+  controller.claim("1");
+  assert.equal(box.state.pending, true);
+  await flush();
+  await flush();
+  assert.equal(box.state.pending, false);
+  assert.equal(box.state.status, "team");
+  assert.equal(box.state.board.parts[0].holder, null, "never optimistic");
+  assert.equal(
+    box.state.error,
+    "Cannot reach the exam server. Check the updated team status, then try again."
+  );
+  assert.equal(calls, 2);
+  controller.stop();
+});
+
+test("claim, release and Ready during an in-flight poll give feedback and send nothing", async () => {
+  for (const [name, make, act] of [
+    ["claim", board, (c) => c.claim("1")],
+    ["release", readinessBoard, (c) => c.release()],
+    ["ready", readinessBoard, (c) => c.ready()],
+  ]) {
+    let release;
+    const calls = [];
+    const { box, controller } = lobby(async (url, init) => {
+      calls.push(init.method);
+      if (calls.length === 2) await new Promise((r) => (release = r));
+      return Response.json(make());
+    });
+    await flush();
+    controller.refresh();
+    act(controller);
+    assert.deepEqual(calls, ["GET", "GET"], `${name} must not race the poll`);
+    assert.equal(box.state.pending, false);
+    assert.equal(
+      box.state.error,
+      "Team status is updating. Try again in a moment.",
+      `${name} click is acknowledged, not silently dropped`
+    );
+    release();
+    await flush();
+    await flush();
+    assert.deepEqual(calls, ["GET", "GET"], `${name} is not replayed later`);
+    controller.stop();
+  }
+});
+
+test("parts locking while a claim is in flight settles on the locked board with one POST", async () => {
+  let release;
+  const calls = [];
+  const locked = () => {
+    const b = board();
+    b.phase.name = "locked";
+    b.allocation = { locked: true, locks_at: null };
+    b.parts[0] = { ...b.parts[0], holder: "Other member" };
+    return b;
+  };
+  const { box, controller } = lobby(async (url, init) => {
+    calls.push(init.method);
+    if (calls.length === 1) return Response.json(board());
+    if (init.method === "POST") {
+      await new Promise((r) => (release = r));
+      return Response.json({ detail: "parts are locked" }, { status: 409 });
+    }
+    return Response.json(locked());
+  });
+  await flush();
+  controller.claim("1");
+  // The scheduled poll fires while the claim is pending; it is queued, not parallel.
+  controller.refresh();
+  assert.deepEqual(calls, ["GET", "POST"]);
+  release();
+  await flush();
+  await flush();
+  assert.deepEqual(calls, ["GET", "POST", "GET"]);
+  assert.equal(box.state.pending, false);
+  assert.equal(box.state.board.phase.name, "locked");
+  assert.equal(box.state.board.allocation.locked, true);
+  assert.equal(box.state.error, "parts are locked");
+  controller.claim("1");
+  controller.release();
+  assert.equal(calls.length, 3, "nothing is sent once locked");
+  controller.stop();
+});
+
+test("a phase deadline wakes one poll just after it, and a failed wake falls back to polling", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let clock = 0;
+  const calls = [];
+  let fail = false;
+  const waiting = () => {
+    const b = board();
+    b.phase.name = "waiting";
+    b.phase.selection_opens_at = "2026-01-01T00:02:01Z"; // 1 s after server_time
+    return b;
+  };
+  const { box, controller } = lobby(
+    async () => {
+      calls.push(clock);
+      if (fail) throw new TypeError("Failed to fetch");
+      return Response.json(waiting());
+    },
+    { now: () => clock, random: () => 0 }
+  );
+  await flush();
+  assert.equal(calls.length, 1);
+  fail = true;
+  clock = 1099;
+  t.mock.timers.tick(1099);
+  await flush();
+  assert.equal(calls.length, 1, "no poll before the boundary");
+  clock = 1100;
+  t.mock.timers.tick(1);
+  await flush();
+  await flush();
+  assert.equal(calls.length, 2, "one wake 100 ms after the deadline");
+  assert.equal(box.state.status, "error");
+  assert.equal(box.state.board.phase.name, "waiting", "stale board kept");
+  // The same deadline does not wake again; the regular 3 s poll recovers.
+  clock = 4099;
+  t.mock.timers.tick(2999);
+  await flush();
+  assert.equal(calls.length, 2);
+  clock = 4100;
+  t.mock.timers.tick(1);
+  await flush();
+  assert.equal(calls.length, 3);
+  controller.stop();
+});
+
+test("lobby countdowns and contest start ignore a device clock several minutes off", () => {
+  const b = parseTeamLobby({
+    ...board(),
+    phase: { ...board().phase, starts_at: "2026-01-01T00:10:00Z" },
+  });
+  for (const skew of [-7 * 60_000, 0, 7 * 60_000]) {
+    const wall = Date.now;
+    Date.now = () => wall() + skew;
+    try {
+      assert.equal(countdownMs(b, 1000, 11_000), 50_000);
+      assert.equal(contestStartRemaining(null, b, 1000, 11_000), 470_000);
+    } finally {
+      Date.now = wall;
+    }
+  }
+});

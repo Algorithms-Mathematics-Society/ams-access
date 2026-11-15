@@ -409,9 +409,15 @@ export function createTeamLobbyController(options: {
       }
       emit({
         error:
-          error instanceof Error && error.name !== "AbortError"
-            ? error.message
-            : "Team request timed out. Please try again.",
+          // fetch rejects with a TypeError when no HTTP response arrived; its
+          // message is browser text ("Failed to fetch", "Load failed").
+          error instanceof TypeError
+            ? action
+              ? "Cannot reach the exam server. Check the updated team status, then try again."
+              : "Cannot reach the exam server."
+            : error instanceof Error && error.name !== "AbortError"
+              ? error.message
+              : "Team request timed out. Please try again.",
         ...(action ? {} : { status: "error" as const }),
       });
     } finally {
@@ -459,6 +465,15 @@ export function createTeamLobbyController(options: {
       return;
     void run(action, undefined, revision);
   }
+  /** A part action clicked while an ordinary poll is in flight is not sent
+   * (the board may be about to change) but must not be silently dropped. */
+  const pollInFlight = () => {
+    if (busy && !state.pending && !stopped && !terminal) {
+      emit({ error: "Team status is updating. Try again in a moment." });
+      return true;
+    }
+    return false;
+  };
   emit({});
   void run();
   return {
@@ -468,6 +483,7 @@ export function createTeamLobbyController(options: {
       void run();
     },
     claim: (label: string) => {
+      if (pollInFlight()) return;
       if (
         state.pending ||
         busy ||
@@ -480,6 +496,7 @@ export function createTeamLobbyController(options: {
       void run("claim", label);
     },
     release: () => {
+      if (pollInFlight()) return;
       if (
         state.pending ||
         busy ||
@@ -492,6 +509,7 @@ export function createTeamLobbyController(options: {
       void run("release");
     },
     ready: () => {
+      if (pollInFlight()) return;
       const board = state.board;
       if (
         stopped ||

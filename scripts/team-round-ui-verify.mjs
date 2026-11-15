@@ -631,6 +631,65 @@ async function verifyLiveBoardPaging({ page }) {
   assert.equal(await rows.count(), 50);
   await pager.scrollIntoViewIfNeeded();
 }
+/** A mutable team endpoint for scenes that change between polls. `fail` is an
+ * HTTP status or "offline" (no response at all); `hold` parks GETs until released. */
+function teamFixture(board, mutations = {}) {
+  const fx = { board, fail: null, hold: null, gets: 0, posts: [] };
+  fx.extra = {
+    [`/contests/${CONTEST}/team`]: async (route, json) => {
+      fx.gets += 1;
+      if (fx.hold) await fx.hold;
+      if (fx.fail === "offline") return route.abort("internetdisconnected");
+      if (fx.fail) return json({ detail: "Team service is restarting." }, fx.fail);
+      return json(fx.board);
+    },
+  };
+  for (const [action, next] of Object.entries(mutations))
+    fx.extra[`/contests/${CONTEST}/team/${action}`] = (route, json) => {
+      fx.posts.push(action);
+      fx.board = next(fx, JSON.parse(route.request().postData() || "null"));
+      return json(fx.board);
+    };
+  return fx;
+}
+/** Runs page timers far enough for at least one ordinary board poll (3 to 5 s). */
+const nextPoll = (page) => page.clock.runFor(5_500);
+const shown = (page, text) => page.getByText(text, { exact: true }).first().waitFor();
+const absent = async (page, text) =>
+  assert.equal(await page.getByText(text, { exact: true }).count(), 0, `unexpected: ${text}`);
+const isDisabled = (page, name) =>
+  page.getByRole("button", { name, exact: true }).first().isDisabled();
+/** Countdown text as whole seconds, e.g. "Parts lock in 09:58" -> 598. */
+async function countdownSeconds(page, prefix) {
+  const text = await page
+    .getByText(new RegExp(`^${prefix} \\d\\d:\\d\\d$`))
+    .first()
+    .textContent();
+  const [m, s] = text
+    .slice(prefix.length + 1)
+    .split(":")
+    .map(Number);
+  return m * 60 + s;
+}
+const lockedBoard = (options = {}, startsAt = iso(T0 + 20 * 60_000)) => {
+  const board = lobbyBoard({
+    phase: "locked",
+    locked: true,
+    claims: ["1", "2", "3", "4"],
+    ...options,
+  });
+  return { ...board, phase: { ...board.phase, name: "locked", starts_at: startsAt } };
+};
+/** Waits until the lobby's own feedback region reads exactly `text` ("" = empty). */
+async function lobbyFeedback(page, text) {
+  const region = page.locator(".team-lobby-feedback");
+  for (let i = 0; i < 50; i++) {
+    if ((await region.innerText()).trim() === text) return;
+    await page.waitForTimeout(100);
+  }
+  assert.equal((await region.innerText()).trim(), text, "lobby feedback");
+}
+const RAW_FETCH = /Failed to fetch|Load failed|NetworkError/;
 export const SCENES = {
   VoiceEndedNotice: [
     [
@@ -1099,6 +1158,295 @@ export const SCENES = {
         team: lobbyBoard({ claims: ["1", null, "3", null] }),
         viewport: { width: 1920, height: 1080 },
       },
+    ],
+    // Edge scenes for the 1 Dec team round (flaky networks, skewed clocks, races).
+    (() => {
+      const fx = teamFixture(lobbyBoard({ claims: [null, "2", null, null] }));
+      return [
+        "poll-5xx-stale-board-recovers",
+        {
+          team: fx.board,
+          extra: fx.extra,
+          after: async ({ page }) => {
+            fx.fail = 503;
+            await nextPoll(page);
+            // The lobby says it itself: the voice panel may be showing a voice notice instead.
+            await lobbyFeedback(page, "Team service is restarting. Reconnecting…");
+            assert(await isDisabled(page, "Claim part 1"), "stale board must not accept claims");
+            await capture(page, "TeamLobby-poll-5xx-stale");
+            fx.fail = null;
+            await nextPoll(page);
+            await page
+              .getByRole("button", { name: "Claim part 1", exact: true })
+              .and(page.locator(":enabled"))
+              .waitFor();
+            await lobbyFeedback(page, "");
+          },
+        },
+      ];
+    })(),
+    (() => {
+      const fx = teamFixture(lobbyBoard({ claims: ["1", null, null, null] }));
+      return [
+        "offline-stale-board",
+        {
+          team: fx.board,
+          extra: fx.extra,
+          after: async ({ page }) => {
+            fx.fail = "offline";
+            await nextPoll(page);
+            await page.locator(".team-lobby-feedback").getByText(/./).first().waitFor();
+            const text = await page.locator(".team-lobby-feedback").innerText();
+            assert.doesNotMatch(text, RAW_FETCH, `raw browser error shown: ${text}`);
+            await lobbyFeedback(page, "Cannot reach the exam server. Reconnecting…");
+            assert(await isDisabled(page, "Release part 1"));
+          },
+        },
+      ];
+    })(),
+    (() => {
+      const fx = teamFixture(lobbyBoard());
+      fx.fail = "offline";
+      return [
+        "offline-first-load-recovers",
+        {
+          team: null,
+          extra: fx.extra,
+          after: async ({ page }) => {
+            await shown(page, "Cannot reach the exam server. Reconnecting…");
+            fx.fail = null;
+            await page.clock.runFor(16_000);
+            await page.getByRole("heading", { level: 1, name: "Team Seven" }).waitFor();
+            await shown(page, "Choose your part");
+          },
+        },
+      ];
+    })(),
+    (() => {
+      let release;
+      const fx = teamFixture(lobbyBoard());
+      return [
+        "claim-during-slow-poll",
+        {
+          team: fx.board,
+          extra: fx.extra,
+          after: async ({ page }) => {
+            fx.hold = new Promise((r) => (release = r));
+            await nextPoll(page);
+            await page.getByRole("button", { name: "Claim part 2", exact: true }).click();
+            await shown(page, "Team status is updating. Try again in a moment.");
+            assert.deepEqual(fx.posts, [], "a claim never races the poll");
+            fx.hold = null;
+            release();
+            await page.waitForTimeout(300);
+            assert.deepEqual(fx.posts, [], "the dropped click is not replayed");
+          },
+        },
+      ];
+    })(),
+    [
+      "clock-ahead-7m-choosing",
+      {
+        team: lobbyBoard(),
+        after: async ({ page }) => {
+          await page.clock.setSystemTime(T0 + 12 * 60_000);
+          await nextPoll(page);
+          const left = await countdownSeconds(page, "Parts lock in");
+          assert(left > 590 && left <= 600, `device clock moved the lock countdown: ${left}s`);
+        },
+      },
+    ],
+    [
+      "clock-behind-7m-locked",
+      {
+        team: lockedBoard(),
+        after: async ({ page }) => {
+          await page.clock.setSystemTime(T0 - 2 * 60_000);
+          await nextPoll(page);
+          const left = await countdownSeconds(page, "Contest starts in");
+          assert(left > 890 && left <= 900, `device clock moved the start countdown: ${left}s`);
+          assert(await isDisabled(page, "Ready"));
+        },
+      },
+    ],
+    [
+      "clock-ahead-past-start-locked",
+      {
+        team: lockedBoard(),
+        after: async ({ page }) => {
+          // The device believes the contest started 10 minutes ago; the server does not.
+          await page.clock.setSystemTime(T0 + 30 * 60_000);
+          await nextPoll(page);
+          assert(await isDisabled(page, "Ready"), "entered before the server start");
+          await page.getByText(/^Contest starts in 1\d:\d\d$/).waitFor();
+        },
+      },
+    ],
+    (() => {
+      const unassigned = lockedBoard({ claims: [null, "2", "3", "4"] }, iso(T0));
+      const fx = teamFixture(unassigned);
+      return [
+        "locked-unassigned-then-auto-assigned",
+        {
+          team: unassigned,
+          extra: fx.extra,
+          after: async ({ page }) => {
+            await shown(page, "Waiting for your server-confirmed assignment.");
+            await shown(page, "No part selected");
+            assert(await isDisabled(page, "Ready"), "no assignment must not enter");
+            await capture(page, "TeamLobby-locked-unassigned");
+            const assigned = lockedBoard({}, iso(T0));
+            assigned.members[0].assigned_by = "auto";
+            fx.board = assigned;
+            await nextPoll(page);
+            await shown(page, "Your assigned part is 1 (P1).");
+            await shown(page, "Auto-assigned");
+            assert.equal(await isDisabled(page, "Ready"), false);
+          },
+        },
+      ];
+    })(),
+    (() => {
+      let contestFails = true;
+      const board = lobbyBoard({ phase: "locked", locked: true, claims: ["1", "2", "3", "4"] });
+      board.phase = { ...board.phase, name: "locked" };
+      const contest = {
+        uid: CONTEST,
+        title: "Round 2 fixture",
+        description: "",
+        status: "ACTIVE",
+        starts_at: iso(T0),
+        ends_at: iso(T0 + 3 * 3600_000),
+        is_practice: false,
+        frozen: false,
+        organization_name: "AMS",
+        problems: [],
+        server_time: board.server_time,
+        remaining_ms: 3 * 3600_000,
+        phase: "running",
+      };
+      return [
+        "start-time-unavailable-retry",
+        {
+          team: board,
+          extra: {
+            [`/contests/${CONTEST}`]: (route, json) =>
+              contestFails ? json({ detail: "unavailable" }, 503) : json(contest),
+          },
+          after: async ({ page }) => {
+            await page.clock.runFor(20_000);
+            await shown(page, "Contest start time unavailable. Retry or use Help.");
+            assert(await isDisabled(page, "Ready"), "unknown start must not enter");
+            await capture(page, "TeamLobby-start-unavailable");
+            contestFails = false;
+            await page.getByRole("button", { name: "Retry start time", exact: true }).click();
+            await page
+              .getByRole("button", { name: "Ready", exact: true })
+              .and(page.locator(":enabled"))
+              .waitFor({ timeout: 20_000 });
+            await absent(page, "Contest start time unavailable. Retry or use Help.");
+          },
+        },
+      ];
+    })(),
+    (() => {
+      const fx = teamFixture(lobbyBoard({ claims: [null, "2", "3", "4"] }), {
+        claim: (_fx, body) =>
+          lobbyBoard({
+            claims: [body.part_label, "2", "3", "4"],
+            ready: [false, true, true, true],
+          }),
+        ready: () => lockedBoard({}, iso(T0)),
+      });
+      return [
+        "keyboard-claim-ready-enter",
+        {
+          team: fx.board,
+          extra: fx.extra,
+          after: async ({ page }) => {
+            await keyboardActivate(
+              page,
+              page.getByRole("button", { name: "Claim part 1", exact: true })
+            );
+            await page.getByRole("button", { name: "Release part 1", exact: true }).waitFor();
+            assert.deepEqual(fx.posts, ["claim"]);
+            await keyboardActivate(
+              page,
+              page.locator(".team-lobby-readiness").getByRole("button", { name: "Ready" })
+            );
+            await shown(page, "Parts are locked");
+            assert.deepEqual(fx.posts, ["claim", "ready"]);
+            await keyboardActivate(page, page.getByRole("button", { name: "Ready", exact: true }));
+            await page.getByRole("button", { name: "Team progress" }).waitFor({ timeout: 30_000 });
+          },
+        },
+      ];
+    })(),
+    (() => {
+      const fx = teamFixture(
+        lobbyBoard({ claims: ["1", "2", "3", null], ready: [true, true, true, false] })
+      );
+      return [
+        "member-substituted-mid-choosing",
+        {
+          team: fx.board,
+          extra: fx.extra,
+          after: async ({ page }) => {
+            await shown(page, "Chen Li");
+            const next = lobbyBoard({
+              claims: ["1", "2", null, null],
+              ready: [true, true, false, false],
+            });
+            next.members[2] = { ...next.members[2], member_uid: "m9", display_name: "Eli Mensah" };
+            fx.board = next;
+            await nextPoll(page);
+            await shown(page, "Eli Mensah");
+            await absent(page, "Chen Li");
+            await shown(page, "2 of 4 members ready");
+            assert.equal(await isDisabled(page, "Claim part 3"), false);
+          },
+        },
+      ];
+    })(),
+    (() => {
+      const discussion = lobbyBoard({ phase: "discussion", now: T0 + 120_000 - 8_000 });
+      const fx = teamFixture(discussion);
+      let release;
+      return [
+        "discussion-to-choosing-boundary",
+        {
+          team: discussion,
+          extra: fx.extra,
+          after: async ({ page }) => {
+            // The boundary passes while the board request is slow.
+            fx.hold = new Promise((r) => (release = r));
+            fx.board = lobbyBoard({ now: T0 + 120_000 });
+            await page.clock.runFor(8_100);
+            await shown(page, "Checking the next phase…");
+            assert(await isDisabled(page, "Claim part 1"), "claims must wait for the server");
+            fx.hold = null;
+            release();
+            await page.clock.runFor(5_500);
+            await shown(page, "Choose your part");
+            assert.equal(await isDisabled(page, "Claim part 1"), false);
+          },
+        },
+      ];
+    })(),
+    [
+      "zoom-200-choosing",
+      {
+        team: lobbyBoard({ claims: ["1", null, "3", null], names: LONG }),
+        viewport: { width: 683, height: 384 },
+      },
+    ],
+    [
+      "zoom-200-locked",
+      { team: lockedBoard({ names: LONG }), viewport: { width: 683, height: 384 } },
+    ],
+    [
+      "small-window-locked-light",
+      { team: lockedBoard(), theme: "light", viewport: { width: 390, height: 640 } },
     ],
   ],
 };
