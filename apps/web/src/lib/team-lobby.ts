@@ -409,9 +409,15 @@ export function createTeamLobbyController(options: {
       }
       emit({
         error:
-          error instanceof Error && error.name !== "AbortError"
-            ? error.message
-            : "Team request timed out. Please try again.",
+          // fetch rejects with a TypeError when no HTTP response arrived; its
+          // message is browser text ("Failed to fetch", "Load failed").
+          error instanceof TypeError
+            ? action
+              ? "Cannot reach the exam server. Check the updated team status, then try again."
+              : "Cannot reach the exam server."
+            : error instanceof Error && error.name !== "AbortError"
+              ? error.message
+              : "Team request timed out. Please try again.",
         ...(action ? {} : { status: "error" as const }),
       });
     } finally {
