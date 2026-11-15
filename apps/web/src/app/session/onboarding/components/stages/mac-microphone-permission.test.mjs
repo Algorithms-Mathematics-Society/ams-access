@@ -101,3 +101,41 @@ test("other platforms do not invoke native Mac permission", async () => {
     assert.deepEqual(h.calls, ["get_platform", "audio", "pass"]);
   }
 });
+
+test("microphone meter reads analyser only at its UI sampling interval", async () => {
+  const h = harness("linux");
+  let reads = 0;
+  let frame;
+  let level = 0;
+  h.c.AudioContext = class extends h.c.AudioContext {
+    createAnalyser() {
+      return {
+        frequencyBinCount: 8,
+        getByteFrequencyData(data) {
+          reads += 1;
+          data.fill(20);
+        },
+      };
+    }
+  };
+  h.c.requestAnimationFrame = (callback) => {
+    frame = callback;
+    return 1;
+  };
+  h.c.setLevel = (update) => {
+    level = update(level);
+  };
+  await h.run();
+  for (const now of [0, 16, 32, 64, 100, 124]) frame(now);
+  assert.equal(reads, 0);
+  frame(125);
+  assert.equal(reads, 1);
+  assert.equal(level, 50);
+  for (const now of [140, 180, 230, 249]) frame(now);
+  assert.equal(reads, 1);
+  frame(250);
+  assert.equal(reads, 2);
+  h.c.cancelled = true;
+  frame(500);
+  assert.equal(reads, 2, "a cancelled stage must stop sampling");
+});

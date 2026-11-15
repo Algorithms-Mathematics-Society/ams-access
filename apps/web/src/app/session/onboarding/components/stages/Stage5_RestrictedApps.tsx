@@ -2,7 +2,7 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { Text } from "@astryxdesign/core/Text";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckLine, StageHeader } from "../ui";
 import { invoke, withNullableTimeout } from "../../support";
 
@@ -27,28 +27,58 @@ export function Stage5_RestrictedApps({ onPass, onWarn }: { onPass(): void; onWa
   const [found, setFound] = useState<string[]>([]);
   const [cleared, setCleared] = useState(false);
 
+  const generationRef = useRef(0);
+  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inFlightRef = useRef(false);
+  const clearAdvance = useCallback(() => {
+    if (advanceTimerRef.current !== null) clearTimeout(advanceTimerRef.current);
+    advanceTimerRef.current = null;
+  }, []);
+
   const doScan = useCallback(async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    const generation = ++generationRef.current;
+    clearAdvance();
     setOutcome("scanning");
     setCleared(false);
-    await new Promise((r) => setTimeout(r, 600));
-    const result = await withNullableTimeout(
-      invoke<{ found: string[]; clean: boolean }>("scan_processes"),
-      3000
-    );
-    if (result === null || !Array.isArray(result.found)) {
-      setFound([]);
-      setOutcome("unknown");
-      setTimeout(onWarn, 1400);
-      return;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      if (generation !== generationRef.current) return;
+      const result = await withNullableTimeout(
+        invoke<{ found: string[]; clean: boolean }>("scan_processes"),
+        3000
+      );
+      if (generation !== generationRef.current) return;
+      const scheduleAdvance = (callback: () => void, delay: number) => {
+        advanceTimerRef.current = setTimeout(() => {
+          if (generation !== generationRef.current) return;
+          advanceTimerRef.current = null;
+          callback();
+        }, delay);
+      };
+      if (result === null || !Array.isArray(result.found)) {
+        setFound([]);
+        setOutcome("unknown");
+        scheduleAdvance(onWarn, 1400);
+        return;
+      }
+      setFound(result.found);
+      setOutcome(result.found.length === 0 ? "clean" : "found");
+      if (result.found.length === 0) scheduleAdvance(onPass, 800);
+    } finally {
+      if (generation === generationRef.current) inFlightRef.current = false;
     }
-    setFound(result.found);
-    setOutcome(result.found.length === 0 ? "clean" : "found");
-    if (result.found.length === 0) setTimeout(onPass, 800);
-  }, [onPass, onWarn]);
+  }, [clearAdvance, onPass, onWarn]);
 
   useEffect(() => {
     void doScan();
-  }, [doScan]);
+    return () => {
+      generationRef.current += 1;
+      inFlightRef.current = false;
+      clearAdvance();
+    };
+  }, [clearAdvance, doScan]);
 
   const prettyName: Record<string, string> = {
     obs: "OBS Studio",

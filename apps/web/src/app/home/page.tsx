@@ -166,10 +166,15 @@ export default function HomePage() {
           const isMac = await macos;
           if (cancelled) return;
           const win = window.__TAURI__?.window.getCurrentWindow();
-          await Promise.all([
-            win?.setSimpleFullscreen(false),
-            isMac ? undefined : win?.setFullscreen(false),
-          ]);
+          if (!win) return;
+          if (isMac) {
+            await win.setSimpleFullscreen(false);
+          } else {
+            // Avoid repeatedly sending GTK/window-manager mutations while already
+            // windowed. Keep checking so a late secure start is still restored.
+            const fullscreen = await win.isFullscreen();
+            if (!cancelled && fullscreen) await win.setFullscreen(false);
+          }
         })
         .catch(() => {})
         .finally(() => {
@@ -450,7 +455,7 @@ export default function HomePage() {
   }, []);
   const openPreflight = useCallback(
     async (contestId: string) => {
-      if (entryNavigationRef.current) return;
+      if (entryNavigationRef.current) return "ignored" as const;
       entryNavigationRef.current = true;
       if (
         hasNativeBridge() &&
@@ -474,7 +479,7 @@ export default function HomePage() {
           generation !== authGeneration() ||
           token !== participantToken()
         )
-          return;
+          return "ignored" as const;
         teamEntryProbe.current = null;
         if (result !== "solo") {
           entryNavigationRef.current = false;
@@ -485,7 +490,7 @@ export default function HomePage() {
                 ? TEAM_WRONG_CONTEST_MESSAGE
                 : "Could not verify this contest for your device. Check your connection, then select the contest again to retry."
           );
-          return;
+          return "blocked" as const;
         }
         setTeamEntryMessage(null);
       }
@@ -494,11 +499,13 @@ export default function HomePage() {
         clearSetupHandoff(sessionStorage);
         setupAttemptId(sessionStorage, contestId, () => crypto.randomUUID(), true);
         router.push(`/session/onboarding?contestId=${encodeURIComponent(contestId)}`);
+        return "navigating" as const;
       } catch {
         entryNavigationRef.current = false;
         setResumeStatus(
           "Could not start a new setup attempt on this device. Ask your invigilator for help before rejoining."
         );
+        return "blocked" as const;
       }
     },
     [router]

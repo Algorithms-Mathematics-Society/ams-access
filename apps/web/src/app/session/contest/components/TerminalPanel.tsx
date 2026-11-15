@@ -1,6 +1,7 @@
+import { dateTimeFormatter } from "@/lib/date-time-format";
 import type { CompilerDiagnostic } from "../compiler-diagnostics";
 import { sendable } from "../custom-cases";
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { memo, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { TabList, Tab } from "@astryxdesign/core/TabList";
 import { ChevronUp, ChevronDown } from "lucide-react";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -636,168 +637,16 @@ export function TerminalPanel({
                 {visibleAttempts.length === 0 && (
                   <Text color="secondary">No {testResultFilter} attempts yet.</Text>
                 )}
-                {visibleAttempts.map((sub) => {
-                  const isExpanded = expandedAttemptId === sub.id;
-                  const status = sub.status;
-                  const isPending = status === "QUEUED" || status === "RUNNING";
-                  return (
-                    <VStack
-                      key={sub.id}
-                      gap={2}
-                      paddingBlock={3}
-                      style={{ borderBottom: "var(--border-width) solid var(--color-border)" }}
-                    >
-                      <Button
-                        label={`Attempt #${sub.attempt_no}`}
-                        variant="ghost"
-                        aria-expanded={isExpanded}
-                        onClick={() => toggleExpandAttempt(sub.id)}
-                        style={{
-                          height: "auto",
-                          minHeight: "var(--spacing-8)",
-                          width: "100%",
-                          paddingInline: 0,
-                          justifyContent: "space-between",
-                          textAlign: "start",
-                        }}
-                        endContent={
-                          isExpanded ? (
-                            <ChevronUp size={14} aria-hidden="true" />
-                          ) : (
-                            <ChevronDown size={14} aria-hidden="true" />
-                          )
-                        }
-                      >
-                        <HStack as="span" gap={3} align="center" wrap="wrap">
-                          <VerdictBadge
-                            variant="chip"
-                            code={
-                              (isPending
-                                ? sub.status
-                                : (sub.final_verdict ?? sub.status)) as VerdictCode
-                            }
-                          />
-                          <Text type="supporting">Attempt #{sub.attempt_no}</Text>
-                          <Text type="supporting" color="secondary">
-                            {LANGUAGE_META[sub.language as keyof typeof LANGUAGE_META]?.name ||
-                              sub.language}
-                          </Text>
-                          <Text type="supporting" color="secondary" hasTabularNumbers>
-                            {new Date(sub.created_at).toLocaleTimeString()}
-                          </Text>
-                        </HStack>
-                      </Button>
-                      {isExpanded && (
-                        <VStack
-                          gap={3}
-                          padding={3}
-                          style={{
-                            borderInlineStart: "var(--border-width) solid var(--color-border)",
-                          }}
-                        >
-                          {isPending ? (
-                            <Text type="supporting" color="secondary">
-                              Grading in progress... Live results will update automatically.
-                            </Text>
-                          ) : (
-                            <>
-                              <HStack gap={3} wrap="wrap">
-                                <Text type="supporting" color="secondary">
-                                  Runtime:{" "}
-                                  {sub.runtime_ms !== null ? `${sub.runtime_ms} ms` : "N/A"}
-                                </Text>
-                                <Text type="supporting" color="secondary">
-                                  Memory: {sub.memory_kb !== null ? `${sub.memory_kb} KB` : "N/A"}
-                                </Text>
-                                <Text type="supporting" color="secondary">
-                                  Score: {sub.score}
-                                </Text>
-                              </HStack>
-                              {testResults[sub.id] ? (
-                                (() => {
-                                  const trs = testResults[sub.id];
-                                  const passedCount = trs.filter(
-                                    (tr: any) => tr.verdict === "AC"
-                                  ).length;
-                                  return (
-                                    <VStack gap={2}>
-                                      <Text type="supporting" color="secondary">
-                                        {passedCount} / {trs.length} test cases passed
-                                      </Text>
-                                      {trs
-                                        .map((tr: any, originalIndex: number) => ({
-                                          tr,
-                                          originalIndex,
-                                        }))
-                                        .filter(({ tr }: any) =>
-                                          testResultFilter === "all"
-                                            ? true
-                                            : testResultFilter === "passed"
-                                              ? tr.verdict === "AC"
-                                              : tr.verdict !== "AC"
-                                        )
-                                        .map(({ tr, originalIndex }: any, idx: number) => {
-                                          const testNumber = tr.test_number ?? originalIndex + 1;
-                                          return (
-                                            <HStack
-                                              key={`${sub.id}-${testNumber}-${idx}`}
-                                              gap={3}
-                                              align="center"
-                                              wrap="wrap"
-                                              paddingBlock={1}
-                                            >
-                                              <Text type="supporting">Test {testNumber}</Text>
-                                              <VerdictBadge
-                                                variant="chip"
-                                                code={(tr.verdict ?? tr.status) as VerdictCode}
-                                              />
-                                              {tr.runtime_ms != null && (
-                                                <Text
-                                                  type="supporting"
-                                                  color="secondary"
-                                                  hasTabularNumbers
-                                                >
-                                                  {tr.runtime_ms}ms
-                                                </Text>
-                                              )}
-                                              {tr.memory_kb != null && (
-                                                <Text
-                                                  type="supporting"
-                                                  color="secondary"
-                                                  hasTabularNumbers
-                                                >
-                                                  {Math.round(tr.memory_kb / 1024)}MB
-                                                </Text>
-                                              )}
-                                            </HStack>
-                                          );
-                                        })}
-                                      {trs.filter((tr: any) =>
-                                        testResultFilter === "all"
-                                          ? true
-                                          : testResultFilter === "passed"
-                                            ? tr.verdict === "AC"
-                                            : tr.verdict !== "AC"
-                                      ).length === 0 && (
-                                        <Text type="supporting" color="secondary">
-                                          No {testResultFilter} tests in this attempt.
-                                        </Text>
-                                      )}
-                                    </VStack>
-                                  );
-                                })()
-                              ) : (
-                                <Text type="supporting" color="secondary">
-                                  Loading test results...
-                                </Text>
-                              )}
-                            </>
-                          )}
-                        </VStack>
-                      )}
-                    </VStack>
-                  );
-                })}
+                {visibleAttempts.map((sub) => (
+                  <AttemptRow
+                    key={sub.id}
+                    sub={sub}
+                    isExpanded={expandedAttemptId === sub.id}
+                    tests={testResults[sub.id]}
+                    testResultFilter={testResultFilter}
+                    toggleExpandAttempt={toggleExpandAttempt}
+                  />
+                ))}
               </VStack>
             )}
           </VStack>
@@ -806,3 +655,152 @@ export function TerminalPanel({
     </VStack>
   );
 }
+
+const AttemptRow = memo(function AttemptRow({
+  sub,
+  isExpanded,
+  tests,
+  testResultFilter,
+  toggleExpandAttempt,
+}: {
+  sub: SubmissionAttemptRecord;
+  isExpanded: boolean;
+  tests: any[] | undefined;
+  testResultFilter: TerminalPanelProps["testResultFilter"];
+  toggleExpandAttempt: TerminalPanelProps["toggleExpandAttempt"];
+}) {
+  const isPending = sub.status === "QUEUED" || sub.status === "RUNNING";
+  const createdAt = new Date(sub.created_at);
+  const createdAtLabel = Number.isFinite(createdAt.getTime())
+    ? dateTimeFormatter({ hour: "numeric", minute: "numeric", second: "numeric" }).format(createdAt)
+    : "Invalid Date";
+  const { passedCount, visibleTests } = useMemo(() => {
+    if (!isExpanded || !tests) return { passedCount: 0, visibleTests: [] };
+    return {
+      passedCount: tests.filter((tr) => tr.verdict === "AC").length,
+      visibleTests: tests
+        .map((tr, originalIndex) => ({ tr, originalIndex }))
+        .filter(
+          ({ tr }) =>
+            testResultFilter === "all" ||
+            (testResultFilter === "passed" ? tr.verdict === "AC" : tr.verdict !== "AC")
+        ),
+    };
+  }, [isExpanded, tests, testResultFilter]);
+  return (
+    <VStack
+      gap={2}
+      paddingBlock={3}
+      style={{ borderBottom: "var(--border-width) solid var(--color-border)" }}
+    >
+      <Button
+        label={`Attempt #${sub.attempt_no}`}
+        variant="ghost"
+        aria-expanded={isExpanded}
+        onClick={() => toggleExpandAttempt(sub.id)}
+        style={{
+          height: "auto",
+          minHeight: "var(--spacing-8)",
+          width: "100%",
+          paddingInline: 0,
+          justifyContent: "space-between",
+          textAlign: "start",
+        }}
+        endContent={
+          isExpanded ? (
+            <ChevronUp size={14} aria-hidden="true" />
+          ) : (
+            <ChevronDown size={14} aria-hidden="true" />
+          )
+        }
+      >
+        <HStack as="span" gap={3} align="center" wrap="wrap">
+          <VerdictBadge
+            variant="chip"
+            code={(isPending ? sub.status : (sub.final_verdict ?? sub.status)) as VerdictCode}
+          />
+          <Text type="supporting">Attempt #{sub.attempt_no}</Text>
+          <Text type="supporting" color="secondary">
+            {LANGUAGE_META[sub.language as keyof typeof LANGUAGE_META]?.name || sub.language}
+          </Text>
+          <Text type="supporting" color="secondary" hasTabularNumbers>
+            {createdAtLabel}
+          </Text>
+        </HStack>
+      </Button>
+      {isExpanded && (
+        <VStack
+          gap={3}
+          padding={3}
+          style={{
+            borderInlineStart: "var(--border-width) solid var(--color-border)",
+          }}
+        >
+          {isPending ? (
+            <Text type="supporting" color="secondary">
+              Grading in progress... Live results will update automatically.
+            </Text>
+          ) : (
+            <>
+              <HStack gap={3} wrap="wrap">
+                <Text type="supporting" color="secondary">
+                  Runtime: {sub.runtime_ms !== null ? `${sub.runtime_ms} ms` : "N/A"}
+                </Text>
+                <Text type="supporting" color="secondary">
+                  Memory: {sub.memory_kb !== null ? `${sub.memory_kb} KB` : "N/A"}
+                </Text>
+                <Text type="supporting" color="secondary">
+                  Score: {sub.score}
+                </Text>
+              </HStack>
+              {tests ? (
+                <VStack gap={2}>
+                  <Text type="supporting" color="secondary">
+                    {passedCount} / {tests.length} test cases passed
+                  </Text>
+                  {visibleTests.map(({ tr, originalIndex }: any, idx: number) => {
+                    const testNumber = tr.test_number ?? originalIndex + 1;
+                    return (
+                      <HStack
+                        key={`${sub.id}-${testNumber}-${idx}`}
+                        gap={3}
+                        align="center"
+                        wrap="wrap"
+                        paddingBlock={1}
+                      >
+                        <Text type="supporting">Test {testNumber}</Text>
+                        <VerdictBadge
+                          variant="chip"
+                          code={(tr.verdict ?? tr.status) as VerdictCode}
+                        />
+                        {tr.runtime_ms != null && (
+                          <Text type="supporting" color="secondary" hasTabularNumbers>
+                            {tr.runtime_ms}ms
+                          </Text>
+                        )}
+                        {tr.memory_kb != null && (
+                          <Text type="supporting" color="secondary" hasTabularNumbers>
+                            {Math.round(tr.memory_kb / 1024)}MB
+                          </Text>
+                        )}
+                      </HStack>
+                    );
+                  })}
+                  {visibleTests.length === 0 && (
+                    <Text type="supporting" color="secondary">
+                      No {testResultFilter} tests in this attempt.
+                    </Text>
+                  )}
+                </VStack>
+              ) : (
+                <Text type="supporting" color="secondary">
+                  Loading test results...
+                </Text>
+              )}
+            </>
+          )}
+        </VStack>
+      )}
+    </VStack>
+  );
+});

@@ -17,12 +17,16 @@ const deferred = () => {
   const promise = new Promise((r) => (resolve = r));
   return { promise, resolve };
 };
-function harness() {
+function harness({ fullscreen = async () => false } = {}) {
   const platform = deferred(),
     engaged = deferred(),
     calls = [];
   let cleanup, tick;
   const win = {
+    isFullscreen: async () => {
+      calls.push("isFullscreen");
+      return fullscreen();
+    },
     setSimpleFullscreen: async () => calls.push("simple"),
     setFullscreen: async () => calls.push("native"),
   };
@@ -80,4 +84,43 @@ test("mounted Home retains leftover lockdown restoration", async () => {
   await flush();
   assert.ok(h.calls.includes("release"));
   h.stop();
+});
+
+test("windowed Linux Home does not repeatedly mutate the native window", async () => {
+  const h = harness();
+  h.platform.resolve({ os: "linux" });
+  h.engaged.resolve(false);
+  await flush();
+  h.tick();
+  await flush();
+  assert.equal(h.calls.filter((call) => call === "isFullscreen").length, 2);
+  assert.equal(h.calls.filter((call) => call === "is_lockdown_engaged").length, 2);
+  assert.ok(!h.calls.includes("native"));
+  assert.ok(!h.calls.includes("simple"));
+  h.stop();
+});
+
+test("a late fullscreen transition on Linux is still restored on the next check", async () => {
+  let fullscreen = false;
+  const h = harness({ fullscreen: async () => fullscreen });
+  h.platform.resolve({ os: "linux" });
+  h.engaged.resolve(false);
+  await flush();
+  fullscreen = true;
+  h.tick();
+  await flush();
+  assert.equal(h.calls.filter((call) => call === "native").length, 1);
+  h.stop();
+});
+
+test("leaving Home during fullscreen lookup cannot mutate the next workspace", async () => {
+  const fullscreen = deferred();
+  const h = harness({ fullscreen: () => fullscreen.promise });
+  h.platform.resolve({ os: "linux" });
+  h.engaged.resolve(false);
+  await flush();
+  h.stop();
+  fullscreen.resolve(true);
+  await flush();
+  assert.ok(!h.calls.includes("native"));
 });

@@ -1,5 +1,5 @@
 import type { DiagnosticNavigation } from "../compiler-diagnostics";
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useLayoutEffect, useState, type Dispatch, type SetStateAction } from "react";
 import dynamic from "next/dynamic";
 import { Play, Send, Check, X, Settings2, AlignLeft, Plus, Trash2 } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
@@ -206,11 +206,28 @@ export function EditorPanel({
     };
   }, [themeMenuOpen, setThemeMenuOpen]);
 
-  const settingsTriggerBottom =
-    themeMenuOpen && typeof document !== "undefined"
-      ? (document.getElementById("contest-editor-settings-trigger")?.getBoundingClientRect()
-          .bottom ?? 0)
-      : 0;
+  const [settingsTriggerBottom, setSettingsTriggerBottom] = useState(0);
+  useLayoutEffect(() => {
+    if (!themeMenuOpen) return;
+    const trigger = document.getElementById("contest-editor-settings-trigger");
+    if (!trigger) return;
+    const measure = () => setSettingsTriggerBottom(trigger.getBoundingClientRect().bottom);
+    measure();
+    // Ancestor sizes cover toolbar wrapping and workspace resizing, including
+    // position-only movement of the trigger. Scrolling can move it too.
+    const observer = new ResizeObserver(measure);
+    let ancestor: HTMLElement | null = trigger;
+    while (ancestor) {
+      observer.observe(ancestor);
+      if (ancestor.matches("[data-contest-page]")) break;
+      ancestor = ancestor.parentElement;
+    }
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [themeMenuOpen]);
   const settingsTop = `clamp(var(--spacing-4), calc(${settingsTriggerBottom}px + var(--spacing-2)), calc(100dvh - var(--spacing-10) * 8))`;
 
   const runDisabled =

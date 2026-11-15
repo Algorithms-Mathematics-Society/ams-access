@@ -28,6 +28,7 @@ function harness() {
       if (name === "react")
         return {
           useMemo: (fn) => fn(),
+          memo: (fn) => fn,
           useState: () => [
             selected,
             (value) => {
@@ -39,11 +40,13 @@ function harness() {
             deps = next;
           },
         };
+      if (name === "@/lib/date-time-format")
+        return { dateTimeFormatter: (options) => new Intl.DateTimeFormat(undefined, options) };
       if (name === "../custom-cases") return { sendable: () => [] };
       return new Proxy({}, { get: (_, key) => key });
     },
   };
-  vm.runInNewContext(compiled, context);
+  vm.runInNewContext(compiled + "\nexports.AttemptRowForTest = AttemptRow;", context);
   let props = {
     problemLabel: "A",
     runMode: "all",
@@ -66,6 +69,18 @@ function harness() {
       tree = context.exports.TerminalPanel(props);
       effect?.();
       tree = context.exports.TerminalPanel(props);
+    },
+    attempt(props) {
+      tree = context.exports.AttemptRowForTest(props);
+    },
+    text() {
+      const visit = (node) => {
+        if (node == null || typeof node === "boolean") return "";
+        if (Array.isArray(node)) return node.map(visit).join("");
+        if (typeof node === "object") return visit(node.props?.children);
+        return String(node);
+      };
+      return visit(tree);
     },
     choose(tab) {
       selected = tab;
@@ -182,4 +197,40 @@ test("each Run pane reports changes against its own source snapshot", () => {
   h.choose("all");
   h.render();
   assert.equal(h.results().stale, true);
+});
+
+test("attempt rows preserve original test numbering, filtered empty states and toggle identity", () => {
+  const h = harness();
+  const toggled = [];
+  const props = {
+    sub: {
+      id: "attempt-A",
+      attempt_no: 2,
+      status: "COMPLETED",
+      final_verdict: "WA",
+      language: "cpp17",
+      created_at: "2026-11-15T10:00:00Z",
+      runtime_ms: 3,
+      memory_kb: 1024,
+      score: 0,
+    },
+    isExpanded: true,
+    tests: [{ verdict: "AC" }, { verdict: "WA" }, { verdict: "WA", test_number: 42 }],
+    testResultFilter: "failed",
+    toggleExpandAttempt: (id) => toggled.push(id),
+  };
+  h.attempt(props);
+  assert.match(h.text(), /1 \/ 3 test cases passed/);
+  assert.match(h.text(), /Test 2/);
+  assert.match(h.text(), /Test 42/);
+  assert.doesNotMatch(h.text(), /Test 1/);
+  h.buttons()[0].props.onClick();
+  assert.deepEqual(toggled, ["attempt-A"]);
+  h.attempt({ ...props, tests: [{ verdict: "AC" }] });
+  assert.match(h.text(), /No failed tests/);
+  h.attempt({ ...props, isExpanded: false });
+  assert.doesNotMatch(h.text(), /test cases passed|Test 2/);
+  h.attempt({ ...props, sub: { ...props.sub, status: "RUNNING", created_at: "invalid" } });
+  assert.match(h.text(), /Grading in progress/);
+  assert.doesNotMatch(h.text(), /test cases passed/);
 });

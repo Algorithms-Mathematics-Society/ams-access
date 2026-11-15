@@ -42,16 +42,17 @@ export function TeamLobby({
   voiceTargetRef?: (node: HTMLElement | null) => void;
 }) {
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const hasBoard = Boolean(state.board);
   const [now, setNow] = useState(() => performance.now());
   useEffect(() => {
+    if (!hasBoard) return;
     const timer = setInterval(() => setNow(performance.now()), 250);
     return () => clearInterval(timer);
-  }, []);
+  }, [hasBoard]);
   const [startsAt, setStartsAt] = useState<string | null>(null);
   const [startConfirmed, setStartConfirmed] = useState(false);
   const [scheduleError, setScheduleError] = useState(false);
   const [scheduleAttempt, setScheduleAttempt] = useState(0);
-  const hasBoard = Boolean(state.board);
   const hasProjectedStart = Boolean(state.board?.phase.starts_at);
   // Current APIs carry the schedule on existing board polls. Older APIs use
   // bounded metadata refresh while waiting, independent of the faster board polls.

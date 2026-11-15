@@ -80,9 +80,9 @@ export function Stage10_AudioVerification({
         let lastUiUpdate = 0;
         function tick(now: number) {
           if (cancelled) return;
-          analyser.getByteFrequencyData(data);
           if (now - lastUiUpdate >= 125) {
             lastUiUpdate = now;
+            analyser.getByteFrequencyData(data);
             const avg = data.reduce((a, b) => a + b, 0) / data.length;
             setLevel((prev) => {
               const next = Math.min(100, avg * 2.5);
