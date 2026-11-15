@@ -102,10 +102,11 @@ export function TeamLobby({
             : state.status === "unpublished"
               ? "Your team will appear here soon."
               : state.status === "error"
-                ? "Team status unavailable. Reconnecting…"
+                ? `${state.error ?? "Team status unavailable."} Reconnecting…`
                 : "Loading your team…"}
         </Text>
-        {state.error && <Text role="alert">{state.error}</Text>}
+        {/* An error status already shows its message above; say it once. */}
+        {state.error && state.status !== "error" && <Text role="alert">{state.error}</Text>}
       </VStack>
     );
   const remaining = countdownMs(board, state.sampledAt, now);
@@ -133,7 +134,9 @@ export function TeamLobby({
           {phase === "waiting"
             ? remaining === 0
               ? "Team lobby"
-              : `Your team lobby opens in ${clock ?? "—"}`
+              : clock
+                ? `Your team lobby opens in ${clock}`
+                : "Your team lobby opens soon"
             : phase === "discussion"
               ? board.phase.prompt
               : phase === "choosing"
@@ -176,7 +179,7 @@ export function TeamLobby({
             {board.allocation.locks_at
               ? " Parts lock when everyone is ready or the timer ends; unclaimed parts are assigned."
               : " Parts lock when everyone is ready."}
-            {" Click Ready after parts lock to enter your workspace."}
+            {" After parts lock, press Ready again to enter your workspace."}
           </Text>
         </VStack>
       )}
@@ -299,14 +302,15 @@ export function TeamLobbyMembers({
         {voiceMemberRows(state.board, snapshot).map(({ member, key, peer, status }) => (
           <ListItem
             key={key}
-            label={`${member.display_name}${member.is_me ? " (you)" : ""}`}
+            // A node label wraps; a plain string would truncate long names unreadably.
+            label={<Text>{`${member.display_name}${member.is_me ? " (you)" : ""}`}</Text>}
             description={
               <Text>{member.part_label ? `Part ${member.part_label}` : "No part selected"}</Text>
             }
             endContent={
               <HStack gap={2} align="center">
                 <Tooltip content={status} focusTrigger="always">
-                  <Text as="span" aria-label={`${member.display_name}: ${status}`}>
+                  <Text as="span" role="img" aria-label={`${member.display_name}: ${status}`}>
                     {status === "muted" ? (
                       <MicOff size={14} aria-hidden="true" />
                     ) : status === "speaking" ? (

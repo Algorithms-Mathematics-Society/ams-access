@@ -638,7 +638,9 @@ test("assignment roster renders once in its own rail with authoritative member a
   assert.equal(rail.props.style.overflow, undefined, "members share page scrolling");
   const rows = rail.props.children.props.children;
   assert.equal(rows.length, 3);
-  assert.equal(rows[0].props.label, "Same name (you)");
+  // A node label wraps; a plain string label would truncate long names.
+  assert.equal(rows[0].props.label.type, "Text");
+  assert.equal(rows[0].props.label.props.children, "Same name (you)");
   assert.equal(rows[0].props.description.props.children, "Part A");
   assert.equal(rows[1].props.description.props.children, "Part B");
   assert.equal(rows[1].props.endContent.props.children[2].props.label, "Auto-assigned");
