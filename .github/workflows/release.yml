@@ -66,6 +66,16 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: pnpm check:versions
 
+      - name: Verify TURN DNS matches the release firewall pin
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          checker=scripts/check-turn-dns.mjs
+          if [ '${{ github.event_name }}' = workflow_dispatch ]; then
+            checker=.release-tooling/scripts/check-turn-dns.mjs
+          fi
+          node "$checker"
+
       - name: Test JavaScript and TypeScript packages
         run: |
           pnpm test

@@ -34,6 +34,10 @@ jobs:
       - name: Verify release version
         run: pnpm check:versions
 
+      - name: Verify TURN DNS matches the release firewall pin
+        timeout-minutes: 1
+        run: node scripts/check-turn-dns.mjs
+
       - name: Build frontend
         run: pnpm turbo run build --filter=@ams/web
 
