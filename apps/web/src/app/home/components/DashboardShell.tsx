@@ -12,6 +12,7 @@ import { Heading, Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { Icon } from "@astryxdesign/core/Icon";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { BoostReferenceManager } from "@/components/BoostReferenceManager";
 import { AccessLogo, AccessMark } from "@/components/AccessLogo";
 import { BatteryStatus } from "@/app/session/contest/components/BatteryStatus";
 
@@ -124,6 +125,7 @@ function DashboardTopActions({
       {/* Home is where a candidate checks the machine before a contest, so
           the charge belongs here as well as in setup and the exam bar. */}
       <BatteryStatus />
+      <BoostReferenceManager iconOnly={isMobile} />
       <ThemeToggle />
       <Button
         label={label}

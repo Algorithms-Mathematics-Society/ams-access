@@ -3955,6 +3955,7 @@ pub fn run() {
             boost_reference::boost_reference_local_status,
             boost_reference::install_boost_reference,
             boost_reference::cancel_boost_reference_download,
+            boost_reference::delete_boost_reference,
             boost_reference::read_boost_reference_asset,
             collect_device_state,
             evaluate_session_readiness,

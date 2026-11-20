@@ -12,7 +12,6 @@ import { buildInitBody } from "@/lib/theme-core";
 import { DARK_LOCKED_ROUTES, buildDarkLockBody } from "@/lib/theme-dark-lock-core";
 import { DarkLockController } from "@/lib/theme-dark-lock";
 import { STORAGE_KEYS } from "@/constants/storage-keys";
-import { BoostReferenceStartup } from "@/components/BoostReferenceStartup";
 
 export const metadata: Metadata = {
   title: "Access · AMS",
@@ -31,10 +30,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         <DarkLockController />
-        <AccessThemeProvider>
-          {children}
-          <BoostReferenceStartup />
-        </AccessThemeProvider>
+        <AccessThemeProvider>{children}</AccessThemeProvider>
       </body>
     </html>
   );
