@@ -16,6 +16,8 @@ use std::{
 use tauri::Manager;
 
 const MAX_FILE: usize = 8 * 1024 * 1024;
+/// A full release needs larger decoded blocks to fit within MAX_BLOCKS.
+const MAX_DECODED: usize = 16 * 1024 * 1024;
 const MAX_PACK: u64 = 128 * 1024 * 1024;
 const MAX_BLOCKS: usize = 32;
 static CANCEL_EPOCH: AtomicU64 = AtomicU64::new(0);
@@ -57,6 +59,7 @@ pub(crate) struct PackStatus {
     installed: bool,
     release: Option<String>,
     title: Option<String>,
+    bytes: Option<u64>,
     downloading: bool,
 }
 
@@ -100,6 +103,12 @@ fn valid_name(name: &str) -> bool {
             .strip_prefix('b')
             .and_then(|v| v.strip_suffix(".br"))
             .is_some_and(|v| v.len() == 4 && v.bytes().all(|b| b.is_ascii_digit()))
+}
+fn pack_bytes(manifest: &Manifest) -> u64 {
+    std::iter::once(&manifest.index)
+        .chain(manifest.blocks.iter())
+        .map(|f| f.bytes)
+        .sum()
 }
 fn valid_release(value: &str) -> bool {
     value
@@ -162,7 +171,7 @@ fn validate_index(raw: &[u8], manifest: &Manifest) -> Result<(), String> {
     }
     for (path, [block, offset, length]) in &index.files {
         if !path.starts_with("boost/")
-            || !path.ends_with(".html")
+            || !(path.ends_with(".html") || path.ends_with(".htm"))
             || path.contains("..")
             || path.contains('\\')
             || path.chars().any(char::is_control)
@@ -248,11 +257,11 @@ fn checked_read(path: &Path, file: &File) -> Result<Vec<u8>, String> {
 }
 fn decode(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let mut reader: Take<_> =
-        brotli::Decompressor::new(bytes, 16 * 1024).take((MAX_FILE + 1) as u64);
+        brotli::Decompressor::new(bytes, 16 * 1024).take((MAX_DECODED + 1) as u64);
     let mut out = Vec::new();
     reader.read_to_end(&mut out).map_err(|e| e.to_string())?;
-    if out.len() > MAX_FILE {
-        return Err("Boost block exceeds 8 MiB".into());
+    if out.len() > MAX_DECODED {
+        return Err("Boost block exceeds 16 MiB".into());
     }
     Ok(out)
 }
@@ -321,6 +330,7 @@ pub(crate) async fn boost_reference_status(
             .as_ref()
             .or(installed.as_ref())
             .map(|v| v.title.clone()),
+        bytes: published.as_ref().or(installed.as_ref()).map(pack_bytes),
         downloading: INSTALLING.load(Ordering::SeqCst),
     })
 }
@@ -337,6 +347,7 @@ pub(crate) async fn boost_reference_local_status(
         installed: installed.is_some(),
         release: installed.as_ref().map(|v| v.release.clone()),
         title: installed.as_ref().map(|v| v.title.clone()),
+        bytes: installed.as_ref().map(pack_bytes),
         downloading: INSTALLING.load(Ordering::SeqCst),
     })
 }
@@ -366,6 +377,7 @@ pub(crate) async fn install_boost_reference(
         return Ok(PackStatus {
             available: true,
             installed: true,
+            bytes: Some(pack_bytes(&manifest)),
             release: Some(manifest.release),
             title: Some(manifest.title),
             downloading: false,
@@ -424,6 +436,7 @@ pub(crate) async fn install_boost_reference(
             installed: true,
             release: Some(manifest.release.clone()),
             title: Some(manifest.title.clone()),
+            bytes: Some(pack_bytes(&manifest)),
             downloading: false,
         })
     }
@@ -432,6 +445,30 @@ pub(crate) async fn install_boost_reference(
         let _ = fs::remove_dir_all(&stage);
     }
     result
+}
+#[tauri::command]
+pub(crate) async fn delete_boost_reference(app: tauri::AppHandle) -> Result<(), String> {
+    if INSTALLING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("Wait for the Boost download to finish".into());
+    }
+    let _guard = InstallGuard;
+    let root = base(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        // Drop the pointer first so a partly removed pack never reads as installed.
+        match fs::remove_file(root.join("active")) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.to_string()),
+            _ => {}
+        }
+        match fs::remove_dir_all(&root) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 pub(crate) async fn read_boost_reference_asset(

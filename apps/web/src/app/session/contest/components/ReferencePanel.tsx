@@ -17,13 +17,15 @@
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, BookOpen, CornerUpLeft, Search, X } from "lucide-react";
+import { ArrowLeft, BookOpen, CornerUpLeft, Download, Search, X } from "lucide-react";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { HOME_PAGE, type Hit, labelOf, readPage, resolveHref, search } from "../cppref";
 import {
+  boostPackSize,
+  clearBoostCache,
   labelBoost,
   loadBoostIndex,
   readBoostPage,
@@ -31,6 +33,7 @@ import {
   searchBoost,
 } from "../boostref";
 import { invoke } from "@ams/api-client";
+import { resolveApiBase } from "@/lib/api-base";
 import { referenceContent } from "../reference-content";
 import { useTheme } from "@/lib/theme";
 
@@ -166,6 +169,9 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
   const [path, setPath] = useState(HOME_PAGE);
   const [book, setBook] = useState<"cpp" | "boost">("cpp");
   const [boostReady, setBoostReady] = useState(false);
+  // Download size of a published pack that is missing or newer than this device's.
+  const [boostOffer, setBoostOffer] = useState<number | null>(null);
+  const [boostDownloading, setBoostDownloading] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
   const [status, setStatus] = useState<Status>({ kind: "loading" });
   const [reload, setReload] = useState(0);
@@ -201,8 +207,13 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
     let cancelled = false;
     setStatus({ kind: "loading" });
     (book === "boost" ? readBoostPage(path) : readPage(path))
-      .then(({ html }) => {
+      .then(({ path: landed, html }) => {
         if (cancelled) return;
+        // A redirect stub landed elsewhere; relative links need the real path.
+        if (landed !== path) {
+          setPath(landed);
+          return;
+        }
         const host = hostRef.current;
         if (!host) return;
         shadowRef.current ??= host.attachShadow({ mode: "open" });
@@ -309,17 +320,29 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
     };
   }, [query, book]);
 
-  const crumb = useMemo(() => (book === "boost" ? labelBoost(path) : labelOf(path)), [path, book]);
+  // The C++ home page would only repeat the C++ button beside it.
+  const crumb = useMemo(
+    () => (book === "boost" ? labelBoost(path) : path === HOME_PAGE ? "" : labelOf(path)),
+    [path, book]
+  );
 
   useEffect(() => {
     void invoke<{ installed: boolean }>("boost_reference_local_status")
-      .then((result) => setBoostReady(result.installed))
+      .then(async (local) => {
+        setBoostReady(local.installed);
+        const published = await invoke<{
+          available: boolean;
+          installed: boolean;
+          bytes: number | null;
+        }>("boost_reference_status", { apiUrl: resolveApiBase() });
+        if (published.available && !published.installed) setBoostOffer(published.bytes ?? 0);
+      })
       .catch(() => {});
   }, []);
 
   const chooseBook = useCallback(
-    async (next: "cpp" | "boost") => {
-      if (next === book) return;
+    async (next: "cpp" | "boost", reopen = false) => {
+      if (next === book && !reopen) return;
       setHistory([]);
       setQuery("");
       setHits([]);
@@ -339,6 +362,22 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
     },
     [book]
   );
+
+  const downloadBoost = useCallback(async () => {
+    setBoostDownloading(true);
+    setSearchError("");
+    try {
+      await invoke("install_boost_reference", { apiUrl: resolveApiBase() });
+      clearBoostCache();
+      setBoostOffer(null);
+      setBoostReady(true);
+      await chooseBook("boost", true);
+    } catch (error) {
+      setSearchError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBoostDownloading(false);
+    }
+  }, [chooseBook]);
 
   useEffect(() => {
     selectedHitRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -411,26 +450,46 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
             icon={<CornerUpLeft size={15} aria-hidden />}
           />
         ) : null}
-        <BookOpen size={15} aria-hidden />
-        <Button
-          type="button"
-          label="C++"
-          size="sm"
-          variant={book === "cpp" ? "primary" : "ghost"}
-          onClick={() => void chooseBook("cpp")}
-        />
-        {boostReady ? (
+        <BookOpen size={15} aria-hidden style={{ flexShrink: 0 }} />
+        {/* Book switches keep their width; only the page label gives way. */}
+        <HStack gap={4} align="center" style={{ flexShrink: 0 }}>
           <Button
             type="button"
-            label="Boost"
+            label="C++"
             size="sm"
-            variant={book === "boost" ? "primary" : "ghost"}
-            onClick={() => void chooseBook("boost")}
+            variant={book === "cpp" ? "primary" : "ghost"}
+            onClick={() => void chooseBook("cpp")}
           />
+          {boostReady ? (
+            <Button
+              type="button"
+              label="Boost"
+              size="sm"
+              variant={book === "boost" ? "primary" : "ghost"}
+              onClick={() => void chooseBook("boost")}
+            />
+          ) : null}
+          {boostOffer !== null ? (
+            <Button
+              type="button"
+              label={
+                boostDownloading
+                  ? "Downloading Boost…"
+                  : `${boostReady ? "Update" : "Download"} Boost${boostOffer ? ` (${boostPackSize(boostOffer)})` : ""}`
+              }
+              size="sm"
+              variant="ghost"
+              icon={<Download size={15} aria-hidden />}
+              isDisabled={boostDownloading}
+              onClick={() => void downloadBoost()}
+            />
+          ) : null}
+        </HStack>
+        {crumb ? (
+          <Text size="sm" maxLines={1} style={{ fontWeight: 600, minWidth: 0 }}>
+            {crumb}
+          </Text>
         ) : null}
-        <Text size="sm" style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
-          {crumb}
-        </Text>
 
         <HStack gap={6} align="center" style={{ marginLeft: "auto", minWidth: 0 }}>
           <Search size={14} aria-hidden />

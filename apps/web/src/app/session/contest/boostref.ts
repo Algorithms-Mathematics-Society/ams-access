@@ -8,11 +8,16 @@ type Index = {
   home: string;
   blocks: string[];
   files: Record<string, Entry>;
+  /** Page titles in the insertion order of `files` (absent in older packs). */
+  titles?: string[];
 };
 export type BoostHit = { path: string; label: string; category: string };
 let indexPromise: Promise<Index> | null = null;
+let searchable: { path: string; label: string; text: string }[] | null = null;
 const blocks = new Map<string, Promise<Uint8Array>>();
 const decoder = new TextDecoder();
+// Decoded blocks are up to 16 MiB each; keep only a few in memory.
+const CACHED_BLOCKS = 3;
 
 async function asset(name: string, release: string): Promise<Uint8Array> {
   return new Uint8Array(await invoke<ArrayBuffer>("read_boost_reference_asset", { name, release }));
@@ -53,11 +58,10 @@ async function block(index: Index, which: number): Promise<Uint8Array> {
     throw error;
   });
   blocks.set(key, pending);
-  if (blocks.size > 8) blocks.delete(blocks.keys().next().value!);
+  if (blocks.size > CACHED_BLOCKS) blocks.delete(blocks.keys().next().value!);
   return pending;
 }
-export async function readBoostPage(path: string): Promise<{ path: string; html: string }> {
-  const index = await loadBoostIndex();
+async function readEntry(index: Index, path: string): Promise<string> {
   const entry = Object.hasOwn(index.files, path) ? index.files[path] : null;
   if (!entry) throw new Error("This page is not in the offline Boost reference.");
   const [which, offset, length] = entry;
@@ -70,34 +74,63 @@ export async function readBoostPage(path: string): Promise<{ path: string; html:
     offset + length > bytes.length
   )
     throw new Error("The Boost reference page is incomplete.");
-  return { path, html: decoder.decode(bytes.subarray(offset, offset + length)) };
+  return decoder.decode(bytes.subarray(offset, offset + length));
+}
+/** The target of a `<meta http-equiv="refresh">` stub, if it stays in the book. */
+function redirectOf(html: string, from: string): string | null {
+  for (const [tag] of html.slice(0, 4096).matchAll(/<meta\b[^>]*>/gi)) {
+    if (!/http-equiv\s*=\s*["']?refresh/i.test(tag)) continue;
+    const url = /content\s*=\s*["'][^"']*?url\s*=\s*([^"'\s>]+)/i.exec(tag)?.[1];
+    return url ? resolveBoostHref(url, from) : null;
+  }
+  return null;
+}
+/** Read a page, following Boost's redirect stubs. `path` is where it landed. */
+export async function readBoostPage(path: string): Promise<{ path: string; html: string }> {
+  const index = await loadBoostIndex();
+  let html = await readEntry(index, path);
+  for (let hop = 0; hop < 3; hop++) {
+    const next = redirectOf(html, path);
+    if (!next || !Object.hasOwn(index.files, next)) break;
+    path = next;
+    html = await readEntry(index, path);
+  }
+  return { path, html };
 }
 export function labelBoost(path: string): string {
   return path
     .replace(/^boost\//, "")
-    .replace(/\.html$/, "")
+    .replace(/\.html?$/, "")
     .replace(/\//g, " · ");
 }
+const BOOST_SITE = /^(?:www\.)?boost\.org$/i;
 export function resolveBoostHref(href: string, from: string): string | null {
   const raw = href.trim();
-  if (!raw || raw.startsWith("#") || raw.startsWith("//") || /[\\\u0000-\u001f\u007f]/.test(raw))
-    return null;
+  if (!raw || raw.startsWith("#") || /[\\\u0000-\u001f\u007f]/.test(raw)) return null;
   let url: URL;
   try {
     url = new URL(raw, `https://offline.invalid/${from}`);
   } catch {
     return null;
   }
-  if (url.origin !== "https://offline.invalid" || url.search) return null;
+  if (url.search) return null;
+  let pathname = url.pathname;
+  // Pages link to boost.org for other libraries; those pages are in the pack.
+  if (BOOST_SITE.test(url.hostname) && (url.protocol === "https:" || url.protocol === "http:")) {
+    const site = /^\/(?:doc\/libs\/[^/]+\/)?((?:libs|doc|more|tools)\/.*)$/.exec(pathname);
+    if (!site) return null;
+    pathname = `/boost/${site[1]}`;
+  } else if (url.origin !== "https://offline.invalid") return null;
   let path: string;
   try {
-    path = decodeURIComponent(url.pathname.slice(1));
+    path = decodeURIComponent(pathname.slice(1));
   } catch {
     return null;
   }
+  if (path.endsWith("/")) path += "index.html";
   if (
     !path.startsWith("boost/") ||
-    !path.endsWith(".html") ||
+    !/\.html?$/.test(path) ||
     path.split("/").some((part) => part === ".." || part === ".")
   )
     return null;
@@ -107,12 +140,26 @@ export async function searchBoost(query: string, limit = 30): Promise<BoostHit[]
   const index = await loadBoostIndex();
   const parts = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   if (!parts.length) return [];
-  return Object.keys(index.files)
-    .filter((path) => parts.every((part) => path.toLocaleLowerCase().includes(part)))
+  searchable ??= Object.keys(index.files).map((path, at) => {
+    const label = index.titles?.[at] || labelBoost(path);
+    return { path, label, text: `${label} ${path}`.toLocaleLowerCase() };
+  });
+  const hits = searchable.filter((page) => parts.every((part) => page.text.includes(part)));
+  // Pages whose title names the query come before pages that merely live near it.
+  const titled = (label: string) =>
+    parts.every((part) => label.toLocaleLowerCase().includes(part)) ? 0 : 1;
+  return hits
+    .sort((a, b) => titled(a.label) - titled(b.label) || a.label.length - b.label.length)
     .slice(0, limit)
-    .map((path) => ({ path, label: labelBoost(path), category: "Boost" }));
+    .map(({ path, label }) => ({ path, label, category: "Boost" }));
 }
 export function clearBoostCache() {
   indexPromise = null;
+  searchable = null;
   blocks.clear();
+}
+export function boostPackSize(bytes: number): string {
+  return bytes >= 1024 * 1024
+    ? `${Math.round(bytes / (1024 * 1024))} MB`
+    : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }

@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-/** Build an optional offline Boost pack from a curated directory of HTML pages.
+/** Build an optional offline Boost pack from a directory of HTML pages.
  * Usage: node build-boost-reference.mjs SOURCE_DIR OUTPUT_DIR RELEASE [TITLE]
- * SOURCE_DIR is expected to contain boost/index.html and selected linked pages.
- * Copy OUTPUT_DIR into AMS_BOOST_REFERENCE_PACK_DIR, then atomically publish
- * latest.json last. No upstream content is fetched by this tool.
+ * SOURCE_DIR contains boost/: either a full extracted release (for example
+ * boost_1_92_0 renamed to boost, whose home is boost/libs/libraries.htm) or a
+ * curated set with boost/index.html. Copy OUTPUT_DIR into
+ * AMS_BOOST_REFERENCE_PACK_DIR, then atomically publish latest.json last.
+ * No upstream content is fetched by this tool.
  */
 import { readdir, readFile, mkdir, writeFile, lstat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
@@ -31,25 +33,28 @@ async function collect(dir) {
     const stat = await lstat(path);
     if (stat.isSymbolicLink()) throw new Error(`Symlink not allowed: ${path}`);
     if (stat.isDirectory()) await collect(path);
-    else if (stat.isFile() && path.endsWith(".html")) {
+    else if (stat.isFile() && /\.html?$/.test(path)) {
       const name = relative(source, path).split(sep).join("/");
       if (!name.startsWith("boost/") || name.includes(".."))
         throw new Error(`Invalid article path: ${name}`);
       const bytes = await readFile(path);
-      if (!bytes.length || bytes.length > 8 * 1024 * 1024)
-        throw new Error(`Invalid article size: ${name}`);
+      if (!bytes.length) continue;
+      if (bytes.length > 8 * 1024 * 1024) throw new Error(`Invalid article size: ${name}`);
       pages.push({ name, bytes });
     }
   }
 }
 await collect(source);
 pages.sort((a, b) => a.name.localeCompare(b.name));
-if (!pages.some((page) => page.name === "boost/index.html"))
-  throw new Error("Source needs boost/index.html");
+const home = ["boost/libs/libraries.htm", "boost/index.html"].find((name) =>
+  pages.some((page) => page.name === name)
+);
+if (!home) throw new Error("Source needs boost/libs/libraries.htm or boost/index.html");
 if (pages.length > 100_000) throw new Error("Too many articles");
 const releaseDir = join(output, release);
 await mkdir(releaseDir, { recursive: true });
 const files = {},
+  titles = [],
   blocks = [],
   blockFiles = [];
 let chunks = [],
@@ -71,17 +76,34 @@ async function flush() {
   chunks = [];
   length = 0;
 }
+const entities = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+function titleOf(bytes) {
+  const match = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(bytes.subarray(0, 16 * 1024).toString());
+  const text = (match?.[1] ?? "")
+    .replace(/&(#\d+|#x[\da-f]+|[a-z]+);/gi, (all, code) =>
+      code[0] !== "#"
+        ? (entities[code.toLowerCase()] ?? all)
+        : String.fromCodePoint(
+            parseInt(code.slice(code[1] === "x" ? 2 : 1), code[1] === "x" ? 16 : 10)
+          )
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.slice(0, 160);
+}
+// Decoded blocks stay under the reader's 16 MiB limit while a full release
+// still fits the 32-block pack format.
 for (const page of pages) {
-  if (length && length + page.bytes.length > 4 * 1024 * 1024) await flush();
+  if (length && length + page.bytes.length > 14 * 1024 * 1024) await flush();
   files[page.name] = [blocks.length, length, page.bytes.length];
+  // Titles follow the insertion order of `files`, so paths are not repeated.
+  titles.push(titleOf(page.bytes));
   chunks.push(page.bytes);
   length += page.bytes.length;
 }
 await flush();
 if (blocks.length > 32) throw new Error("Too many blocks");
-const indexBytes = Buffer.from(
-  JSON.stringify({ codec: "brotli", home: "boost/index.html", blocks, files })
-);
+const indexBytes = Buffer.from(JSON.stringify({ codec: "brotli", home, blocks, files, titles }));
 if (indexBytes.length > 8 * 1024 * 1024) throw new Error("Index too large");
 await writeFile(join(releaseDir, "index.json"), indexBytes);
 const manifest = {
