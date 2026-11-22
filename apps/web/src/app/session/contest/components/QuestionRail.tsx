@@ -104,26 +104,42 @@ export const QuestionRail = memo(function QuestionRail({
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
         />
       </HStack>
-      <VStack gap={1} padding={sidebarCollapsed ? 0 : 2} style={{ flexShrink: 0, paddingTop: 0 }}>
-        <RailToggle
-          label="C++ reference"
-          text="Reference"
-          icon={BookOpen}
-          isOn={referenceOpen}
-          collapsed={sidebarCollapsed}
-          onClick={onToggleReference}
-        />
-        {onToggleAssistant && (
-          <RailToggle
-            label="Docs assistant"
-            text="Ask docs"
-            icon={MessageCircle}
-            isOn={assistantOpen}
-            collapsed={sidebarCollapsed}
-            onClick={onToggleAssistant}
-          />
-        )}
-      </VStack>
+      {/* Side by side when the rail is open; stacked icons when it is collapsed. */}
+      {(() => {
+        const toggles = (
+          <>
+            <RailToggle
+              label="C++ reference"
+              text="Reference"
+              tooltip="Browse the C++ standard library and Boost reference"
+              icon={BookOpen}
+              isOn={referenceOpen}
+              collapsed={sidebarCollapsed}
+              onClick={onToggleReference}
+            />
+            {onToggleAssistant && (
+              <RailToggle
+                label="Docs assistant"
+                text="Ask docs"
+                tooltip="Ask about C++, nlohmann/json and Boost documentation"
+                icon={MessageCircle}
+                isOn={assistantOpen}
+                collapsed={sidebarCollapsed}
+                onClick={onToggleAssistant}
+              />
+            )}
+          </>
+        );
+        return sidebarCollapsed ? (
+          <VStack gap={1} style={{ flexShrink: 0 }}>
+            {toggles}
+          </VStack>
+        ) : (
+          <HStack gap={1} padding={2} style={{ flexShrink: 0, paddingTop: 0 }}>
+            {toggles}
+          </HStack>
+        );
+      })()}
       <VStack
         as="nav"
         aria-label="Choose a question"
@@ -294,6 +310,7 @@ export const QuestionRail = memo(function QuestionRail({
 function RailToggle({
   label,
   text,
+  tooltip,
   icon: Icon,
   isOn,
   collapsed,
@@ -301,6 +318,7 @@ function RailToggle({
 }: {
   label: string;
   text: string;
+  tooltip: string;
   icon: typeof BookOpen;
   isOn: boolean;
   collapsed: boolean;
@@ -309,15 +327,18 @@ function RailToggle({
   return (
     <Button
       label={label}
+      tooltip={tooltip}
       variant={isOn ? "primary" : "secondary"}
       size="sm"
       onClick={onClick}
       aria-pressed={isOn}
       style={{
         width: "100%",
+        // Shares the row with the other toggle; stacked when collapsed.
+        ...(collapsed ? {} : { flex: 1, minWidth: 0 }),
         height: "var(--spacing-10)",
-        padding: collapsed ? 0 : "var(--spacing-2)",
-        justifyContent: collapsed ? "center" : "start",
+        padding: collapsed ? 0 : "var(--spacing-1)",
+        justifyContent: "center",
       }}
     >
       {collapsed ? (
@@ -325,22 +346,8 @@ function RailToggle({
           <Icon size={16} aria-hidden="true" />
         </HStack>
       ) : (
-        <HStack gap={2} align="center" style={{ width: "100%", minWidth: 0 }}>
-          <HStack
-            gap={0}
-            align="center"
-            justify="center"
-            style={{
-              flexShrink: 0,
-              width: "var(--spacing-8)",
-              height: "var(--spacing-8)",
-              borderRadius: "var(--radius-element)",
-              // On the primary (dark) fill the light chip hid the icon and label.
-              background: isOn ? "transparent" : "var(--color-background-body)",
-            }}
-          >
-            <Icon size={14} aria-hidden="true" />
-          </HStack>
+        <HStack gap={1} align="center" justify="center" style={{ minWidth: 0 }}>
+          <Icon size={14} aria-hidden="true" style={{ flexShrink: 0 }} />
           <Text
             type="label"
             color={isOn ? "inherit" : undefined}
