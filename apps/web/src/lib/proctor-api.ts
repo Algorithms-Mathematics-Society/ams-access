@@ -1145,3 +1145,40 @@ export async function getMyContestSession(contestUid: string): Promise<{
     throw error;
   }
 }
+
+// ── documentation assistant ──────────────────────────────────────────────
+
+export type DocsReference = { source: string; title: string; url: string };
+export type DocsOutcome = "answered" | "no_docs" | "declined" | "withheld" | "refused" | "error";
+export type DocsAnswer = {
+  outcome: DocsOutcome;
+  text: string | null;
+  reference: DocsReference | null;
+  example: string | null;
+  exchange_uid: string;
+};
+export type DocsMessage = Omit<DocsAnswer, "exchange_uid"> & {
+  exchange_uid: string;
+  asked_at: string;
+  question: string;
+};
+
+/** One question to the documentation assistant. Each participant has one
+ * chat per contest; the server sends its latest exchanges as context. The
+ * model call happens on the server, so this waits longer than ordinary requests. */
+export async function askDocsAssistant(contestUid: string, question: string): Promise<DocsAnswer> {
+  return request<DocsAnswer>(
+    "POST",
+    `/participant/contests/${encodeURIComponent(contestUid)}/docs-assistant`,
+    { question },
+    45_000
+  );
+}
+
+/** The whole chat in this contest, oldest first. */
+export async function listDocsMessages(contestUid: string): Promise<DocsMessage[]> {
+  return request<DocsMessage[]>(
+    "GET",
+    `/participant/contests/${encodeURIComponent(contestUid)}/docs-assistant/messages`
+  );
+}

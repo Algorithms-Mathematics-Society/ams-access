@@ -1,5 +1,5 @@
 import { memo, type Dispatch, type SetStateAction } from "react";
-import { BookOpen, Bookmark, Camera, ChevronLeft, ChevronRight } from "lucide-react";
+import { BookOpen, Bookmark, Camera, ChevronLeft, ChevronRight, MessageCircle } from "lucide-react";
 import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -32,6 +32,9 @@ export interface QuestionRailProps {
   /** Whether the full-screen C++ reference is showing instead of the split view. */
   referenceOpen: boolean;
   onToggleReference: () => void;
+  /** The documentation assistant chat, opened beside this rail. */
+  assistantOpen?: boolean;
+  onToggleAssistant?: () => void;
 }
 
 export const QuestionRail = memo(function QuestionRail({
@@ -49,6 +52,8 @@ export const QuestionRail = memo(function QuestionRail({
   onToggleCameraPreview,
   referenceOpen,
   onToggleReference,
+  assistantOpen = false,
+  onToggleAssistant,
 }: QuestionRailProps) {
   const markedCount = questions.filter((question) =>
     markedQuestionIds.includes(question.id)
@@ -99,47 +104,26 @@ export const QuestionRail = memo(function QuestionRail({
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
         />
       </HStack>
-      <HStack padding={sidebarCollapsed ? 0 : 2} style={{ flexShrink: 0, paddingTop: 0 }}>
-        <Button
+      <VStack gap={1} padding={sidebarCollapsed ? 0 : 2} style={{ flexShrink: 0, paddingTop: 0 }}>
+        <RailToggle
           label="C++ reference"
-          variant={referenceOpen ? "primary" : "secondary"}
-          size="sm"
+          text="Reference"
+          icon={BookOpen}
+          isOn={referenceOpen}
+          collapsed={sidebarCollapsed}
           onClick={onToggleReference}
-          aria-pressed={referenceOpen}
-          style={{
-            width: "100%",
-            height: "var(--spacing-10)",
-            padding: sidebarCollapsed ? 0 : "var(--spacing-2)",
-            justifyContent: sidebarCollapsed ? "center" : "start",
-          }}
-        >
-          {sidebarCollapsed ? (
-            <HStack gap={0} align="center" justify="center" style={{ flexShrink: 0 }}>
-              <BookOpen size={16} aria-hidden="true" />
-            </HStack>
-          ) : (
-            <HStack gap={2} align="center" style={{ width: "100%", minWidth: 0 }}>
-              <HStack
-                gap={0}
-                align="center"
-                justify="center"
-                style={{
-                  flexShrink: 0,
-                  width: "var(--spacing-8)",
-                  height: "var(--spacing-8)",
-                  borderRadius: "var(--radius-element)",
-                  background: "var(--color-background-body)",
-                }}
-              >
-                <BookOpen size={14} aria-hidden="true" />
-              </HStack>
-              <Text type="label" maxLines={1} hasTruncateTooltip={false}>
-                Reference
-              </Text>
-            </HStack>
-          )}
-        </Button>
-      </HStack>
+        />
+        {onToggleAssistant && (
+          <RailToggle
+            label="Docs assistant"
+            text="Ask docs"
+            icon={MessageCircle}
+            isOn={assistantOpen}
+            collapsed={sidebarCollapsed}
+            onClick={onToggleAssistant}
+          />
+        )}
+      </VStack>
       <VStack
         as="nav"
         aria-label="Choose a question"
@@ -306,3 +290,67 @@ export const QuestionRail = memo(function QuestionRail({
     </VStack>
   );
 });
+
+function RailToggle({
+  label,
+  text,
+  icon: Icon,
+  isOn,
+  collapsed,
+  onClick,
+}: {
+  label: string;
+  text: string;
+  icon: typeof BookOpen;
+  isOn: boolean;
+  collapsed: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      label={label}
+      variant={isOn ? "primary" : "secondary"}
+      size="sm"
+      onClick={onClick}
+      aria-pressed={isOn}
+      style={{
+        width: "100%",
+        height: "var(--spacing-10)",
+        padding: collapsed ? 0 : "var(--spacing-2)",
+        justifyContent: collapsed ? "center" : "start",
+      }}
+    >
+      {collapsed ? (
+        <HStack gap={0} align="center" justify="center" style={{ flexShrink: 0 }}>
+          <Icon size={16} aria-hidden="true" />
+        </HStack>
+      ) : (
+        <HStack gap={2} align="center" style={{ width: "100%", minWidth: 0 }}>
+          <HStack
+            gap={0}
+            align="center"
+            justify="center"
+            style={{
+              flexShrink: 0,
+              width: "var(--spacing-8)",
+              height: "var(--spacing-8)",
+              borderRadius: "var(--radius-element)",
+              // On the primary (dark) fill the light chip hid the icon and label.
+              background: isOn ? "transparent" : "var(--color-background-body)",
+            }}
+          >
+            <Icon size={14} aria-hidden="true" />
+          </HStack>
+          <Text
+            type="label"
+            color={isOn ? "inherit" : undefined}
+            maxLines={1}
+            hasTruncateTooltip={false}
+          >
+            {text}
+          </Text>
+        </HStack>
+      )}
+    </Button>
+  );
+}
