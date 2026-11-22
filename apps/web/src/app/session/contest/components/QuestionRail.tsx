@@ -111,7 +111,7 @@ export const QuestionRail = memo(function QuestionRail({
             <RailToggle
               label="C++ reference"
               text="Reference"
-              tooltip="cppreference & Boost docs"
+              tooltip="References"
               icon={BookOpen}
               isOn={referenceOpen}
               collapsed={sidebarCollapsed}
@@ -121,7 +121,7 @@ export const QuestionRail = memo(function QuestionRail({
               <RailToggle
                 label="Docs assistant"
                 text="Ask docs"
-                tooltip="Ask docs: C++, JSON, Boost"
+                tooltip="Ask Docs"
                 icon={MessageCircle}
                 isOn={assistantOpen}
                 collapsed={sidebarCollapsed}
