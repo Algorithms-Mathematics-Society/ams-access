@@ -194,7 +194,7 @@ export const AssistantPanel = memo(function AssistantPanel({
           <Text
             type="supporting"
             color={tooLong ? "inherit" : "secondary"}
-            style={tooLong ? { color: "var(--color-text-error)" } : undefined}
+            style={tooLong ? { color: "var(--color-error)" } : undefined}
             hasTabularNumbers
             aria-live="polite"
           >
@@ -252,7 +252,6 @@ function Exchange({ message }: { message: DocsMessage }) {
             code={message.example}
             language="cpp"
             hasCopyButton={false}
-            isWrapped
             width="100%"
             size="sm"
             container="section"

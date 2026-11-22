@@ -198,7 +198,7 @@ export function ResultsPanel({
   if (error) {
     return (
       <VStack gap={2} padding={4}>
-        <Text weight="semibold" style={{ color: "var(--color-text-error)" }}>
+        <Text weight="semibold" style={{ color: "var(--color-error)" }}>
           {error}
         </Text>
         <Text type="supporting" color="secondary">
@@ -247,9 +247,9 @@ export function ResultsPanel({
           weight="semibold"
           style={{
             color: good
-              ? "var(--color-text-success)"
+              ? "var(--color-success)"
               : summary.tone === "failure"
-                ? "var(--color-text-error)"
+                ? "var(--color-error)"
                 : "var(--color-text-secondary)",
           }}
         >
@@ -288,7 +288,7 @@ export function ResultsPanel({
             background: "var(--color-background-error-subtle)",
           }}
         >
-          <Text weight="semibold" style={{ color: "var(--color-text-error)" }}>
+          <Text weight="semibold" style={{ color: "var(--color-error)" }}>
             {brokenRules.length === 1 ? "A source rule was broken" : "Source rules were broken"}
           </Text>
           <Text type="supporting" color="secondary">
@@ -307,7 +307,7 @@ export function ResultsPanel({
           <Text type="supporting" weight="medium">
             Compiler output
           </Text>
-          <pre style={codeBlock("var(--color-text-error)")}>{compilerText}</pre>
+          <pre style={codeBlock("var(--color-error)")}>{compilerText}</pre>
           {onJumpToCompilerError && (
             <Text
               type="supporting"
@@ -397,11 +397,7 @@ function Celebration() {
 
   if (reduced || done) return null;
 
-  const colors = [
-    "var(--color-text-success)",
-    "var(--color-text-accent)",
-    "var(--color-text-primary)",
-  ];
+  const colors = ["var(--color-success)", "var(--color-text-accent)", "var(--color-text-primary)"];
 
   return (
     <span
@@ -591,7 +587,7 @@ function CaseDetail({
         <VStack gap={2}>
           <Text
             weight="semibold"
-            style={{ color: ok ? "var(--color-text-success)" : "var(--color-text-error)" }}
+            style={{ color: ok ? "var(--color-success)" : "var(--color-error)" }}
           >
             {ok ? "Satisfied" : "Broken"}
           </Text>
@@ -615,7 +611,7 @@ function CaseDetail({
         <VStack gap={2}>
           <Text
             weight="semibold"
-            style={{ color: ok ? "var(--color-text-success)" : "var(--color-text-error)" }}
+            style={{ color: ok ? "var(--color-success)" : "var(--color-error)" }}
           >
             {ok ? "Passed" : "Failed"}
           </Text>
