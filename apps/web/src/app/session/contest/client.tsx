@@ -125,6 +125,7 @@ import { TopBar } from "./components/TopBar";
 import { startDisconnectGrace } from "./disconnect-grace";
 import { QuestionRail } from "./components/QuestionRail";
 import { ReferencePanel } from "./components/ReferencePanel";
+import { AssistantPanel } from "./components/AssistantPanel";
 import { ProblemPane } from "./components/ProblemPane";
 import { EditorPanel, type EditorFile } from "./components/EditorPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
@@ -798,6 +799,8 @@ export default function ContestPageClient() {
   // CodeMirror is unsaved code waiting to be lost.
   const [referenceOpen, setReferenceOpen] = useState(false);
   const closeReference = useCallback(() => setReferenceOpen(false), []);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const closeAssistant = useCallback(() => setAssistantOpen(false), []);
   const [lockGraceActive, setLockGraceActive] = useState(false);
   const [lockGraceCountdown, setLockGraceCountdown] = useState(3);
   const [cameraCollapsed, setCameraCollapsed] = useState(true);
@@ -5409,7 +5412,12 @@ export default function ContestPageClient() {
                   onToggleCameraPreview={() => setCameraCollapsed((collapsed) => !collapsed)}
                   referenceOpen={referenceOpen}
                   onToggleReference={() => setReferenceOpen((open) => !open)}
+                  assistantOpen={assistantOpen}
+                  onToggleAssistant={() => setAssistantOpen((open) => !open)}
                 />
+                {assistantOpen && (
+                  <AssistantPanel contestUid={contestId} onClose={closeAssistant} />
+                )}
                 <ProblemPane
                   markedQuestionIds={markedQuestionIds}
                   toggleQuestionMark={toggleQuestionMark}
