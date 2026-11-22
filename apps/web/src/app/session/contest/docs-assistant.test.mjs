@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MAX_QUESTION_WORDS, askErrorMessage, countWords } from "./docs-assistant.ts";
+import { MAX_QUESTION_WORDS, askErrorMessage, countWords, sourceInfo } from "./docs-assistant.ts";
 
 test("words are counted the way the server counts them", () => {
   assert.equal(countWords(""), 0);
@@ -22,4 +22,12 @@ test("errors explain the limit, outage and rejected questions", () => {
     "Value error, questions are limited to 200 words"
   );
   assert.match(askErrorMessage({ status: 0 }), /connection/);
+});
+
+test("each documentation source gets a name and badge", () => {
+  assert.deepEqual(sourceInfo("cppreference"), { name: "cppreference", mark: "C++" });
+  assert.deepEqual(sourceInfo("nlohmann-json"), { name: "nlohmann/json", mark: "{ }" });
+  assert.deepEqual(sourceInfo("Boost"), { name: "Boost", mark: "B" });
+  assert.deepEqual(sourceInfo("other-docs"), { name: "other-docs", mark: "Doc" });
+  assert.deepEqual(sourceInfo(""), { name: "Documentation", mark: "Doc" });
 });

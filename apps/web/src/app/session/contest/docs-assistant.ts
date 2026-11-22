@@ -24,3 +24,12 @@ export function askErrorMessage(error: {
     return error.message || "That question was not accepted.";
   return "The question could not be sent. Check your connection and try again.";
 }
+
+/** Display name and badge for a documentation source; index names are free-form. */
+export function sourceInfo(source: string): { name: string; mark: string } {
+  const key = source.toLowerCase();
+  if (key.includes("json")) return { name: "nlohmann/json", mark: "{ }" };
+  if (key.includes("boost")) return { name: "Boost", mark: "B" };
+  if (key.includes("cpp")) return { name: "cppreference", mark: "C++" };
+  return { name: source || "Documentation", mark: "Doc" };
+}

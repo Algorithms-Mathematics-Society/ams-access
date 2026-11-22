@@ -13,7 +13,7 @@ import {
   ProctorApiError,
   type DocsMessage,
 } from "../../../../lib/proctor-api";
-import { MAX_QUESTION_WORDS, askErrorMessage, countWords } from "../docs-assistant";
+import { MAX_QUESTION_WORDS, askErrorMessage, countWords, sourceInfo } from "../docs-assistant";
 
 // Nothing moves between the chat and the rest of the machine: no copy, cut or
 // paste, no drag and drop, no context menu, in either direction.
@@ -194,7 +194,7 @@ export const AssistantPanel = memo(function AssistantPanel({
           <Text
             type="supporting"
             color={tooLong ? "inherit" : "secondary"}
-            style={tooLong ? { color: "var(--color-text-error)" } : undefined}
+            style={tooLong ? { color: "var(--color-error)" } : undefined}
             hasTabularNumbers
             aria-live="polite"
           >
@@ -237,22 +237,25 @@ function Exchange({ message }: { message: DocsMessage }) {
               : "No answer.")}
         </Text>
         {message.reference && (
-          <VStack gap={0} style={{ minWidth: 0 }}>
-            <Text type="label">
-              {message.reference.title} · {message.reference.source}
-            </Text>
-            {/* Text, not a link: the lockdown blocks external browsing. */}
-            <Text type="supporting" color="secondary" style={{ overflowWrap: "anywhere" }}>
-              {message.reference.url}
-            </Text>
-          </VStack>
+          // One line: source badge, page and source. The address is a tooltip,
+          // not a link: the lockdown blocks external browsing.
+          <div title={message.reference.url} style={{ minWidth: 0 }}>
+            <HStack gap={2} align="center" style={{ minWidth: 0 }}>
+              <SourceBadge source={message.reference.source} />
+              <Text type="label" maxLines={1}>
+                {message.reference.title}
+              </Text>
+              <Text type="supporting" color="secondary" maxLines={1}>
+                · {sourceInfo(message.reference.source).name}
+              </Text>
+            </HStack>
+          </div>
         )}
         {message.example && (
           <CodeBlock
             code={message.example}
             language="cpp"
             hasCopyButton={false}
-            isWrapped
             width="100%"
             size="sm"
             container="section"
@@ -260,5 +263,30 @@ function Exchange({ message }: { message: DocsMessage }) {
         )}
       </VStack>
     </VStack>
+  );
+}
+
+/** A small lettermark per documentation source (no third-party logo files). */
+function SourceBadge({ source }: { source: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        flexShrink: 0,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        minWidth: "var(--spacing-8)",
+        height: "var(--spacing-6)",
+        padding: "0 var(--spacing-1)",
+        borderRadius: "var(--radius-element)",
+        border: "var(--border-width) solid var(--color-border)",
+        fontFamily: "var(--font-family-mono, monospace)",
+        fontSize: "11px",
+        fontWeight: 600,
+      }}
+    >
+      {sourceInfo(source).mark}
+    </span>
   );
 }
