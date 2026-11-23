@@ -72,33 +72,13 @@ jobs:
 
       - name: Install Linux system deps
         if: matrix.platform == 'ubuntu-22.04'
-        # The runners point apt at azure.archive.ubuntu.com, which degrades
-        # often enough to matter. Twice in one day: once unreachable, so
-        # `apt-get update` sat for 38 minutes against a mirror that never
-        # answered, and once merely slow, stalling ~20s on individual
-        # packages until the download outlived the step.
-        #
-        # Retrying did not help the second case, because nothing failed --
-        # it was just slow. Moving off the mirror does. archive.ubuntu.com
-        # answered normally in both runs, visible in the same logs as the
-        # Hit:/Get: lines that were not stalling.
+        # Both public Ubuntu mirrors have stalled these jobs on different
+        # days; scripts/ci-apt-update.sh alternates between them.
         timeout-minutes: 20
         run: |
           set -eu
-          # Include deb822 sources and the mirror lists used by current runners.
-          sudo find /etc/apt -maxdepth 2 -type f \
-            \( -name sources.list -o -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors*.txt' \) \
-            -exec sed -i 's|https\?://azure.archive\.ubuntu\.com|http://archive.ubuntu.com|g' {} +
-          for attempt in 1 2 3; do
-            if sudo timeout 180 apt-get update; then
-              break
-            fi
-            echo "apt-get update failed or stalled (attempt $attempt of 3)"
-            # Drop the partial lists before retrying: a half-written index is
-            # what makes the next attempt fail for a different reason.
-            sudo rm -rf /var/lib/apt/lists/*
-            sleep 5
-          done
+          # Alternates archive.ubuntu.com and the Azure mirror; see the script.
+          sudo sh scripts/ci-apt-update.sh
           # Jammy runner LLVM headers conflict with GStreamer libunwind-dev.
           # Replace libunwind-14-dev in the same apt transaction (trailing -).
           sudo timeout 900 apt-get install -y --no-install-recommends \
@@ -359,33 +339,13 @@ jobs:
 
       - name: Install Linux system deps
         if: matrix.platform == 'ubuntu-22.04'
-        # The runners point apt at azure.archive.ubuntu.com, which degrades
-        # often enough to matter. Twice in one day: once unreachable, so
-        # `apt-get update` sat for 38 minutes against a mirror that never
-        # answered, and once merely slow, stalling ~20s on individual
-        # packages until the download outlived the step.
-        #
-        # Retrying did not help the second case, because nothing failed --
-        # it was just slow. Moving off the mirror does. archive.ubuntu.com
-        # answered normally in both runs, visible in the same logs as the
-        # Hit:/Get: lines that were not stalling.
+        # Both public Ubuntu mirrors have stalled these jobs on different
+        # days; scripts/ci-apt-update.sh alternates between them.
         timeout-minutes: 20
         run: |
           set -eu
-          # Include deb822 sources and the mirror lists used by current runners.
-          sudo find /etc/apt -maxdepth 2 -type f \
-            \( -name sources.list -o -name '*.list' -o -name '*.sources' -o -name 'apt-mirrors*.txt' \) \
-            -exec sed -i 's|https\?://azure.archive\.ubuntu\.com|http://archive.ubuntu.com|g' {} +
-          for attempt in 1 2 3; do
-            if sudo timeout 180 apt-get update; then
-              break
-            fi
-            echo "apt-get update failed or stalled (attempt $attempt of 3)"
-            # Drop the partial lists before retrying: a half-written index is
-            # what makes the next attempt fail for a different reason.
-            sudo rm -rf /var/lib/apt/lists/*
-            sleep 5
-          done
+          # Alternates archive.ubuntu.com and the Azure mirror; see the script.
+          sudo sh scripts/ci-apt-update.sh
           # Jammy runner LLVM headers conflict with GStreamer libunwind-dev.
           # Replace libunwind-14-dev in the same apt transaction (trailing -).
           sudo timeout 900 apt-get install -y --no-install-recommends \
@@ -572,7 +532,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-22.04
     name: Deb install smoke
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Download the built package
@@ -585,7 +545,8 @@ jobs:
         run: |
           set -eux
           docker run --rm -v "$PWD/deb:/deb:ro" -v "$PWD/scripts:/checks:ro" ubuntu:22.04 bash -eux -c '
-            apt-get update
+            # Either public mirror can stall; the script alternates them.
+            APT_UPDATE_TIMEOUT=120 sh /checks/ci-apt-update.sh
             # The clean-image install. Recommends off, so the depends array is
             # proven rather than accidentally satisfied.
             # A pre-existing daemon must not satisfy the pkexec requirement.
