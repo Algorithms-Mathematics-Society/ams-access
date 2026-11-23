@@ -13,6 +13,7 @@ export type TeamVoicePeer = {
   speaking: boolean;
   stream: MediaStream | null;
   volume: number;
+  link?: "connecting" | "reconnecting" | "unavailable";
 };
 export type TeamVoiceSnapshot = {
   status:
@@ -76,7 +77,12 @@ type PeerBase = {
   statsPending: boolean;
   chain: Promise<void>;
 };
-type BrowserPeer = PeerBase & { kind: "browser"; pc: RTCPeerConnection; audio: HTMLAudioElement };
+type BrowserPeer = PeerBase & {
+  kind: "browser";
+  pc: RTCPeerConnection;
+  audio: HTMLAudioElement;
+  deadline?: ReturnType<typeof setTimeout>;
+};
 type NativePeer = PeerBase & {
   kind: "native";
   remoteSet: boolean;
@@ -92,7 +98,9 @@ const MAX_PEERS = 4,
   MAX_ICE = 24 * 4,
   MAX_SDP = 48_000,
   MAX_RETRIES = 6,
-  MAX_ICE_RESTARTS = 3;
+  MAX_ICE_RESTARTS = 3,
+  ICE_CONNECT_MS = 20_000,
+  ICE_RETRY_MS = 15_000;
 function nativeTurnServers(servers: RTCIceServer[]): RTCIceServer[] {
   return servers.flatMap((server) => {
     if (
@@ -141,7 +149,9 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
   };
   const listeners = new Set<() => void>(),
     peers = new Map<string, Peer>(),
+    failedPeers = new Map<string, TeamVoicePeer>(),
     timers = new Set<ReturnType<typeof setTimeout>>();
+  let error: string | null = null;
   let generation = 0,
     socket: WebSocket | null = null,
     microphone: MediaStream | null = null;
@@ -177,7 +187,13 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     later(drain, 100);
   }
   function emit(patch: Partial<TeamVoiceSnapshot> = {}) {
-    snapshot = { ...snapshot, ...patch, peers: [...peers.values()].map((p) => ({ ...p.view })) };
+    if (patch.error !== undefined) error = patch.error;
+    snapshot = {
+      ...snapshot,
+      ...patch,
+      error: error ?? (failedPeers.size ? "A teammate audio connection failed." : null),
+      peers: [...peers.values()].map((p) => ({ ...p.view })).concat([...failedPeers.values()]),
+    };
     for (const listener of listeners) {
       try {
         listener();
@@ -193,6 +209,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       if (g === generation && active) callback();
     }, ms);
     timers.add(timer);
+    return timer;
   }
   function valid(g: number, p?: Peer) {
     return active && g === generation && (!p || peers.get(p.view.memberUid) === p);
@@ -216,11 +233,19 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       }, 500);
     }
   }
+  function clearPeerDeadline(p: BrowserPeer) {
+    if (p.deadline === undefined) return;
+    d.clearTimeout(p.deadline);
+    timers.delete(p.deadline);
+    p.deadline = undefined;
+  }
   function remove(uid: string) {
+    failedPeers.delete(uid);
     const p = peers.get(uid);
     if (!p) return;
     peers.delete(uid);
     if (p.kind === "browser") {
+      clearPeerDeadline(p);
       p.pc.onicecandidate =
         p.pc.ontrack =
         p.pc.onnegotiationneeded =
@@ -240,6 +265,12 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       });
     }
   }
+  function failPeer(p: Peer) {
+    const uid = p.view.memberUid;
+    remove(uid);
+    failedPeers.set(uid, { ...p.view, speaking: false, stream: null, link: "unavailable" });
+    emit();
+  }
   function releaseMicrophone() {
     inputMeter?.stop();
     inputMeter = null;
@@ -257,6 +288,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     sending = false;
     muteTimer = false;
     for (const uid of peers.keys()) remove(uid);
+    failedPeers.clear();
     const old = socket;
     socket = null;
     if (old) {
@@ -284,7 +316,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     cleanup(true);
     if (retries >= MAX_RETRIES)
       return finish("unavailable", "Voice connection could not be restored.");
-    emit({ status: "reconnecting" });
+    emit({ status: "reconnecting", error: null });
     const delay = Math.max(
       atLeast,
       Math.min(30_000, 1000 * 2 ** retries++) * (0.8 + d.random() * 0.2)
@@ -304,10 +336,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
         if (valid(g, p)) await task();
       })
       .catch(() => {
-        if (valid(g, p)) {
-          remove(p.view.memberUid);
-          emit({ error: "A teammate audio connection failed." });
-        }
+        if (valid(g, p)) failPeer(p);
       });
   }
   function addNative(raw: Record<string, unknown>, uid: string) {
@@ -414,8 +443,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
             (me > p.view.memberUid && p.signalingState !== "stable")
           ) {
             p.watching = false;
-            remove(p.view.memberUid);
-            emit({ error: "A teammate audio connection failed." });
+            failPeer(p);
             return;
           }
           p.restarts++;
@@ -523,7 +551,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       uid.length > 128 ||
       uid === me ||
       peers.has(uid) ||
-      peers.size >= MAX_PEERS ||
+      peers.size + failedPeers.size >= MAX_PEERS ||
       !credentials ||
       (!options.nativeVoice && !microphone)
     )
@@ -546,6 +574,7 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
         speaking: false,
         stream: null,
         volume: 1,
+        link: "connecting",
       },
       making: false,
       ignore: false,
@@ -589,7 +618,10 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
       });
       emit();
     };
-    pc.onnegotiationneeded = () =>
+    let restarts = 0;
+    pc.onnegotiationneeded = () => {
+      // The higher UID sends the initial offer so a reload cannot cause early glare.
+      if (me < uid && !pc.remoteDescription && restarts === 0) return;
       work(p, async () => {
         p.making = true;
         try {
@@ -604,32 +636,41 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
           p.making = false;
         }
       });
+    };
     // A failed relay path is restarted on the same connection: restartIce() fires
     // negotiationneeded and perfect negotiation re-offers. Bounded per failure run.
-    let restarts = 0,
-      watching = false;
     const recover = () => {
-      watching = false;
+      clearPeerDeadline(p);
       if (!valid(g, p) || pc.connectionState === "connected") return;
-      if (restarts >= MAX_ICE_RESTARTS || typeof pc.restartIce !== "function") {
-        remove(uid);
-        return emit({ error: "A teammate audio connection failed." });
-      }
+      if (restarts >= MAX_ICE_RESTARTS || typeof pc.restartIce !== "function") return failPeer(p);
       restarts++;
       // Keep lifetime ICE/description limits: remote restarts use the same allowance.
-      watching = true;
-      later(recover, 15_000);
+      p.view.link = "reconnecting";
+      p.view.speaking = false;
+      p.deadline = later(recover, ICE_RETRY_MS);
+      emit();
       try {
         pc.restartIce();
       } catch {
-        remove(uid);
-        emit({ error: "A teammate audio connection failed." });
+        failPeer(p);
       }
     };
+    p.deadline = later(recover, ICE_CONNECT_MS);
     pc.onconnectionstatechange = () => {
       if (!valid(g, p)) return;
-      if (pc.connectionState === "connected") restarts = 0;
-      else if (pc.connectionState === "failed" && !watching) recover();
+      if (pc.connectionState === "connected") {
+        clearPeerDeadline(p);
+        restarts = 0;
+        p.view.link = undefined;
+        emit();
+      } else if (pc.connectionState === "failed" && restarts === 0) {
+        recover();
+      } else if (pc.connectionState === "disconnected" && p.deadline === undefined) {
+        p.view.link = "reconnecting";
+        p.view.speaking = false;
+        p.deadline = later(recover, ICE_CONNECT_MS);
+        emit();
+      }
     };
     emit();
   }

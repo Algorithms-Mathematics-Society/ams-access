@@ -486,6 +486,7 @@ test("native recovery is bounded and only the higher UID offers", async () => {
       },
     });
     await h.welcome(uid);
+    h.sockets[0].autoPong = true;
     onEvent({ v: 1, event: "state", session: "native", peer: "peer0", state: "failed" });
     for (let attempt = 0; attempt < 3; attempt++) {
       await h.flush();
@@ -507,7 +508,8 @@ test("native recovery is bounded and only the higher UID offers", async () => {
       calls.filter((call) => call.op === "local_description" && call.ice_restart).length,
       expectedOffers
     );
-    assert.equal(h.session.getSnapshot().peers.length, 0);
+    assert.equal(h.session.getSnapshot().peers[0].link, "unavailable");
+    h.session.stop();
   }
 });
 
@@ -648,6 +650,20 @@ test("glare ignores impolite collision; polite peer accepts offer", async () => 
     });
     await h.flush();
     assert.equal(Boolean(h.pcs[0].remoteDescription), me === "a");
+    h.session.stop();
+  }
+});
+test("only the higher UID sends the first browser offer", async () => {
+  for (const me of ["a", "z"]) {
+    const h = harness();
+    await h.welcome(me);
+    h.pcs[0].onnegotiationneeded();
+    await h.flush();
+    await h.tick(100);
+    assert.equal(
+      h.sockets[0].sent.some((message) => message.kind === "offer"),
+      me === "z"
+    );
     h.session.stop();
   }
 });
@@ -899,10 +915,36 @@ test("failed peer retries ICE three times without duplicating peers or microphon
   await h.tick(15_000);
   assert.equal(restarts, 3);
   assert.equal(pc.closed, true);
-  assert.equal(h.session.getSnapshot().peers.length, 0);
+  assert.equal(h.session.getSnapshot().peers[0].link, "unavailable");
   assert.equal(h.pcs.length, 1);
   assert.equal(h.tracks.length, 1);
   assert.match(h.session.getSnapshot().error, /teammate audio connection failed/);
+  h.message({ type: "peer-joined", member_uid: "peer0" });
+  assert.equal(h.session.getSnapshot().peers[0].link, "connecting");
+  assert.equal(h.session.getSnapshot().error, null);
+  h.session.stop();
+  assert.equal(h.timers.size, 0);
+});
+
+test("a peer stalled before connecting enters recovery and clears it on connection", async () => {
+  const h = harness();
+  await h.welcome();
+  h.sockets[0].autoPong = true;
+  const pc = h.pcs[0];
+  let restarts = 0;
+  pc.restartIce = () => restarts++;
+  assert.equal(h.session.getSnapshot().peers[0].link, "connecting");
+  await h.tick(19_999);
+  assert.equal(restarts, 0);
+  await h.tick(1);
+  assert.equal(restarts, 1);
+  assert.equal(h.session.getSnapshot().peers[0].link, "reconnecting");
+  pc.connectionState = "connected";
+  pc.onconnectionstatechange();
+  await h.tick(60_000);
+  assert.equal(restarts, 1);
+  assert.equal(h.session.getSnapshot().peers[0].link, undefined);
+  assert.equal(h.session.getSnapshot().error, null);
   h.session.stop();
   assert.equal(h.timers.size, 0);
 });
@@ -958,7 +1000,13 @@ test("unavailable or throwing restartIce closes only the failed peer", async () 
     pc.connectionState = "failed";
     assert.doesNotThrow(() => pc.onconnectionstatechange());
     assert.equal(pc.closed, true);
-    assert.equal(h.session.getSnapshot().peers.length, 1);
+    assert.deepEqual(
+      h.session.getSnapshot().peers.map((peer) => [peer.memberUid, peer.link]),
+      [
+        ["peer1", "connecting"],
+        ["peer0", "unavailable"],
+      ]
+    );
     assert.equal(h.pcs[1].closed, false);
     assert.equal(h.tracks[0].stops, 0);
     h.session.stop();
@@ -994,6 +1042,8 @@ test("remote ICE restart can exchange fresh candidates after the first 24, with 
       .length;
   assert.equal(sentIce(), 25);
   assert.equal(pc.candidates.length, 25);
+  pc.connectionState = "connected";
+  pc.onconnectionstatechange();
   sendCandidates(100);
   for (let i = 0; i < 30; i++) await h.flush();
   await h.tick(15_000);

@@ -37,6 +37,20 @@ test("peer leaves, mutes or stops speaking without duplicated rows", () => {
     "in voice"
   );
 });
+test("an interrupted link stays visible without offering a volume control after failure", () => {
+  for (const [link, status] of [
+    ["connecting", "connecting…"],
+    ["reconnecting", "reconnecting…"],
+    ["unavailable", "audio connection unavailable"],
+  ]) {
+    const [, row] = voiceMemberRows(team, {
+      ...snapshot,
+      peers: [{ ...snapshot.peers[0], link }],
+    });
+    assert.equal(row.status, status);
+    assert.equal(Boolean(row.peer), link !== "unavailable");
+  }
+});
 test("legacy IDs and disconnected signaling do not invent remote presence", () => {
   const legacy = { members: team.members.map(({ member_uid, ...member }) => member) };
   assert.equal(voiceMemberRows(legacy, snapshot)[1].status, "voice status unavailable");
