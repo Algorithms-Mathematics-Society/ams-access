@@ -1392,3 +1392,39 @@ test("lobby countdowns and contest start ignore a device clock several minutes o
     }
   }
 });
+
+test("failed polls back off with jitter, honour Retry-After, and reset on success", async () => {
+  await withFakeTimers(async (clock) => {
+    const replies = [
+      () => Response.json({ detail: "busy" }, { status: 503, headers: { "Retry-After": "10" } }),
+      () => Response.json({ error: "internal server error" }, { status: 500 }),
+      () => Response.json(board()),
+    ];
+    let calls = 0;
+    const controller = createTeamLobbyController({
+      apiBase: "",
+      contestUid: "c",
+      headers: () => ({}),
+      hidden: () => false,
+      random: () => 0.5,
+      onState: () => {},
+      request: async () => replies[calls++](),
+    });
+    await flush();
+    await flush();
+    // Retry-After 10 s is the floor; the first failure adds half of 3 s.
+    assert.deepEqual(clock.pending(), [11_500]);
+    clock.advance(11_500);
+    await flush();
+    await flush();
+    // No Retry-After: 3 s floor plus half of a doubled 6 s window.
+    assert.deepEqual(clock.pending(), [6000]);
+    clock.advance(6000);
+    await flush();
+    await flush();
+    // Success returns to the ordinary 3-5 s cadence.
+    assert.equal(calls, 3);
+    assert.deepEqual(clock.pending(), [4000]);
+    controller.stop();
+  });
+});

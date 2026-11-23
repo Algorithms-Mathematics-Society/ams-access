@@ -1,3 +1,4 @@
+import { jitteredDelayMs } from "../../../lib/retry-jitter.ts";
 // This identifier deduplicates a setup attempt. Only the server can authorize it.
 export const SETUP_ATTEMPT_KEY = "ams_setup_entry_attempt";
 
@@ -64,14 +65,51 @@ export type SetupAccess<S, R> =
   | { kind: "ready"; session: S }
   | { kind: "approval"; sessionId: string; request: R | null };
 
+/** Server overload answers that a retry of the same entry attempt can fix. */
+const OVERLOADED = new Set([429, 500, 502, 503, 504]);
+export const SESSION_OPEN_RETRIES = 3;
+
+/** The entry attempt id makes a repeated POST idempotent, so an explicit
+ * overload answer is retried with full jitter (a whole room opens at once).
+ * Network failures and timeouts are not: the server may still be working. */
+async function startWithBackoff<S>(ports: {
+  start: () => Promise<S>;
+  sleep?: (ms: number) => Promise<void>;
+  random?: () => number;
+}): Promise<S> {
+  const sleep = ports.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await ports.start();
+    } catch (error) {
+      const failure = error as { status?: number; retryAfterSeconds?: number } | null;
+      if (attempt >= SESSION_OPEN_RETRIES || !OVERLOADED.has(failure?.status ?? 0)) throw error;
+      const wait = failure?.retryAfterSeconds;
+      await sleep(
+        jitteredDelayMs(attempt, {
+          baseMs: 2000,
+          capMs: 15_000,
+          floorMs: typeof wait === "number" && Number.isFinite(wait) ? wait * 1000 : 0,
+          random: ports.random ?? Math.random,
+        })
+      );
+    }
+  }
+}
+
 /** The POST response is authority. Neither a local nonce nor a GET approval grants setup. */
 export async function authorizeSetupEntry<S extends AuthorizedSession, R>(
   context: { contestId: string; attemptId: string },
-  ports: { start: () => Promise<S>; latest: (sessionId: string) => Promise<R | null> }
+  ports: {
+    start: () => Promise<S>;
+    latest: (sessionId: string) => Promise<R | null>;
+    sleep?: (ms: number) => Promise<void>;
+    random?: () => number;
+  }
 ): Promise<SetupAccess<S, R>> {
   let session: S;
   try {
-    session = await ports.start();
+    session = await startWithBackoff(ports);
   } catch (error) {
     const failure = error as { status?: number; code?: string; detail?: { session_uid?: unknown } };
     if (

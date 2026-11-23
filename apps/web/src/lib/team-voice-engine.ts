@@ -1,3 +1,4 @@
+import { jitteredDelayMs } from "./retry-jitter.ts";
 import { createVoiceInputMeter } from "./team-voice-input.ts";
 import type { NativeVoiceBackend, NativeVoiceEvent } from "./team-voice-native.ts";
 /** Bounded, relay-only team audio. This module owns only microphone clones. */
@@ -317,10 +318,14 @@ export function createTeamVoiceSession(options: TeamVoiceOptions): TeamVoiceSess
     if (retries >= MAX_RETRIES)
       return finish("unavailable", "Voice connection could not be restored.");
     emit({ status: "reconnecting", error: null });
-    const delay = Math.max(
-      atLeast,
-      Math.min(30_000, 1000 * 2 ** retries++) * (0.8 + d.random() * 0.2)
-    );
+    // Full jitter after a 2 s floor: a server restart closes every socket at
+    // once, and heartbeats and draft saves should land before voice returns.
+    const delay = jitteredDelayMs(retries++, {
+      baseMs: 2000,
+      capMs: 30_000,
+      floorMs: Math.max(atLeast, 2000),
+      random: d.random,
+    });
     later(() => {
       void connect();
     }, delay);

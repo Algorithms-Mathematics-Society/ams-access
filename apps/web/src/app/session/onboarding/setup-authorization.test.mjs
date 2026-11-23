@@ -85,7 +85,11 @@ test("duplicate authorization calls have one owner and failures permit only an e
 
 import { readFileSync } from "node:fs";
 import ts from "typescript";
-import { authorizeSetupEntry, assertSetupAuthorization } from "./setup-authorization.ts";
+import {
+  authorizeSetupEntry,
+  assertSetupAuthorization,
+  SESSION_OPEN_RETRIES,
+} from "./setup-authorization.ts";
 import { readResumeSetup, RESUME_SETUP_KEY } from "./resume-setup.ts";
 const source = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile(
@@ -295,12 +299,66 @@ for (const error of [
         throw error;
       },
     });
-    await h.authorize();
+    const real = globalThis.setTimeout;
+    const waits = [];
+    globalThis.setTimeout = (fn, ms) => {
+      waits.push(ms);
+      return real(fn, 0);
+    };
+    try {
+      await h.authorize();
+    } finally {
+      globalThis.setTimeout = real;
+    }
     assert.equal(h.gate().kind, "unavailable");
     assert.deepEqual(probes(h.gate()), []);
     assert.equal(h.calls.filter((c) => Array.isArray(c) && c[0] === "latest").length, 0);
+    // Only an explicit overload answer is retried, with the same entry attempt.
+    const opens = h.calls.filter((c) => Array.isArray(c) && c[0] === "authorize");
+    const overloaded = error.status === 503 || error.status === 429;
+    assert.equal(opens.length, overloaded ? 1 + SESSION_OPEN_RETRIES : 1);
+    assert.equal(new Set(opens.map((c) => c[1].entryAttemptId)).size, 1);
+    if (overloaded) assert.equal(waits.length, SESSION_OPEN_RETRIES);
   });
 }
+
+test("session open waits at least the server's Retry-After, then jitters", async () => {
+  const waits = [];
+  let opens = 0;
+  const access = await authorizeSetupEntry(
+    { contestId: "contest", attemptId: first },
+    {
+      start: async () => {
+        if (++opens < 3) throw { status: 503, retryAfterSeconds: 5 };
+        return ready;
+      },
+      latest: async () => null,
+      sleep: async (ms) => void waits.push(ms),
+      random: () => 0.5,
+    }
+  );
+  assert.equal(access.kind, "ready");
+  assert.equal(opens, 3);
+  assert.deepEqual(waits, [6000, 7000]);
+});
+
+test("a timeout or network failure is not retried: the first create may still land", async () => {
+  let opens = 0;
+  await assert.rejects(
+    authorizeSetupEntry(
+      { contestId: "contest", attemptId: first },
+      {
+        start: async () => {
+          opens++;
+          throw { status: 0, message: "timed out" };
+        },
+        latest: async () => null,
+        sleep: async () => assert.fail("must not wait"),
+      }
+    )
+  );
+  assert.equal(opens, 1);
+});
 
 test("pending status read failure fails closed and dry-run rehearsal makes no authorization request", async () => {
   const h = fixture({
