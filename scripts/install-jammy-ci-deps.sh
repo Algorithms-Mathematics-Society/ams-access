@@ -28,7 +28,8 @@ for mirror in https://archive.ubuntu.com/ubuntu https://mirrors.edge.kernel.org/
 
   if "${as_root[@]}" timeout 150 apt-get "${apt_options[@]}" --no-list-cleanup -o APT::Update::Error-Mode=any update &&
     "${as_root[@]}" timeout 320 apt-get "${apt_options[@]}" --download-only "${install[@]}"; then
-    "${as_root[@]}" timeout 180 apt-get "${apt_options[@]}" --no-download "${install[@]}"
+    # Jammy apt cannot apply a local .deb with --no-download. This reuses the prefetched archives.
+    "${as_root[@]}" timeout 180 apt-get "${apt_options[@]}" "${install[@]}"
     exit
   fi
   echo "Could not fetch all required Jammy packages from $mirror."
