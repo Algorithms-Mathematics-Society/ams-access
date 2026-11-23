@@ -537,14 +537,18 @@ jobs:
       - name: Install, verify, remove — on a clean image
         run: |
           set -eux
-          docker run --rm -v "$PWD/deb:/deb:ro" -v "$PWD/scripts:/checks:ro" ubuntu:22.04 bash -eux -c '
-            apt-get update
+          docker run --rm -v "$PWD/deb:/deb:ro" -v "$PWD/scripts:/checks:ro" \
+            -v /etc/ssl/certs/ca-certificates.crt:/run/runner-ca-certificates.crt:ro \
+            ubuntu:22.04 bash -eux -c '
+            # Seed TLS trust in the bare image. The ca-certificates package can update the copy.
+            mkdir -p /etc/ssl/certs
+            cp /run/runner-ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
             # The clean-image install. Recommends off, so the depends array is
             # proven rather than accidentally satisfied.
             # A pre-existing daemon must not satisfy the pkexec requirement.
-            apt-get install -y --no-install-recommends polkitd
+            bash /checks/install-jammy-ci-deps.sh polkitd
             ! command -v pkexec
-            apt-get install -y --no-install-recommends /deb/*.deb
+            bash /checks/install-jammy-ci-deps.sh /deb/*.deb
 
             dpkg -l | grep -q ams-access
             test -x /usr/bin/ams-access
@@ -559,7 +563,7 @@ jobs:
 
             test "$(stat -c %a /etc/udev/rules.d/70-ams-access-camera.rules)" = 644
             dpkg-query -W gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-nice gstreamer1.0-pulseaudio
-            apt-get install -y --no-install-recommends gstreamer1.0-tools
+            bash /checks/install-jammy-ci-deps.sh gstreamer1.0-tools
             sh /checks/check-linux-rtc-media.sh
             gst-inspect-1.0 pulsesrc >/dev/null
             gst-inspect-1.0 pulsesink >/dev/null
