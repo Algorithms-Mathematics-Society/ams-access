@@ -13,7 +13,12 @@ import {
   ProctorApiError,
   type DocsMessage,
 } from "../../../../lib/proctor-api";
-import { MAX_QUESTION_WORDS, askErrorMessage, countWords } from "../docs-assistant";
+import {
+  MAX_QUESTION_WORDS,
+  askErrorMessage,
+  countWords,
+  mergeDocsMessages,
+} from "../docs-assistant";
 
 // Nothing moves between the chat and the rest of the machine: no copy, cut or
 // paste, no drag and drop, no context menu, in either direction.
@@ -36,10 +41,12 @@ export interface AssistantPanelProps {
 /** The documentation assistant: one chat per contest on the left of the
  * workspace; scroll up for earlier questions. Answers come from ams-api,
  * which only points at documentation and never writes code. */
-export const AssistantPanel = memo(function AssistantPanel({
-  contestUid,
-  onClose,
-}: AssistantPanelProps) {
+export const AssistantPanel = memo(function AssistantPanel(props: AssistantPanelProps) {
+  // A pending request belongs to the panel instance for its own contest.
+  return <ContestAssistantPanel key={props.contestUid} {...props} />;
+});
+
+function ContestAssistantPanel({ contestUid, onClose }: AssistantPanelProps) {
   const [messages, setMessages] = useState<DocsMessage[]>([]);
   const [question, setQuestion] = useState("");
   const [sending, setSending] = useState(false);
@@ -51,7 +58,10 @@ export const AssistantPanel = memo(function AssistantPanel({
     let cancelled = false;
     listDocsMessages(contestUid)
       .then((loaded) => {
-        if (!cancelled && Array.isArray(loaded)) setMessages(loaded);
+        if (!cancelled && Array.isArray(loaded)) {
+          // The GET snapshot can predate answers that arrived while it was in flight.
+          setMessages((previous) => mergeDocsMessages(loaded, previous));
+        }
       })
       .catch(() => {
         if (!cancelled)
@@ -77,10 +87,8 @@ export const AssistantPanel = memo(function AssistantPanel({
     setError("");
     try {
       const answer = await askDocsAssistant(contestUid, text);
-      setMessages((previous) => [
-        ...previous,
-        { ...answer, question: text, asked_at: new Date().toISOString() },
-      ]);
+      const exchange = { ...answer, question: text, asked_at: new Date().toISOString() };
+      setMessages((previous) => mergeDocsMessages(previous, [exchange]));
       setQuestion("");
     } catch (caught) {
       setError(
@@ -190,6 +198,9 @@ export const AssistantPanel = memo(function AssistantPanel({
             }
           }}
         />
+        <Text type="supporting" color="secondary">
+          Questions and answers are logged for audit.
+        </Text>
         <HStack gap={2} align="center" justify="between">
           <Text
             type="supporting"
@@ -211,7 +222,7 @@ export const AssistantPanel = memo(function AssistantPanel({
       </VStack>
     </VStack>
   );
-});
+}
 
 function Exchange({ message }: { message: DocsMessage }) {
   return (
