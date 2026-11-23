@@ -234,3 +234,36 @@ test("attempt rows preserve original test numbering, filtered empty states and t
   assert.match(h.text(), /Grading in progress/);
   assert.doesNotMatch(h.text(), /test cases passed/);
 });
+
+test("an output-only custom run does not display an Accepted banner", () => {
+  const h = harness();
+  h.render({
+    resultSelection: { source: "run" },
+    runMode: "custom",
+    runViews: {
+      all: {},
+      custom: {
+        result: { status: "AC" },
+        status: { label: "Accepted" },
+        tests: [{ verdict: null }, { stdout_text: "sample output" }],
+      },
+    },
+  });
+  h.choose("custom");
+  h.render();
+  assert.equal(h.results().outputOnly, true);
+  assert.doesNotMatch(h.text(), /Accepted/);
+
+  h.render({
+    runViews: {
+      all: {},
+      custom: {
+        result: { status: "AC" },
+        status: { label: "Accepted" },
+        tests: [{ verdict: "AC" }, { stdout_text: "sample output" }],
+      },
+    },
+  });
+  assert.equal(h.results().outputOnly, false);
+  assert.match(h.text(), /Accepted/);
+});

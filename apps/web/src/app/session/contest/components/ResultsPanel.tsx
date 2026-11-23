@@ -123,6 +123,8 @@ export function ResultsPanel({
   onJumpToCompilerError,
   stale,
   submitted = false,
+  outputOnly = false,
+  customRun = false,
   examples,
   emptyHint,
   onRunAsCustom,
@@ -145,6 +147,8 @@ export function ResultsPanel({
   /** A submission rather than a sample run. Only a submission is worth
    *  celebrating — a passing Run means two sample cases agreed. */
   submitted?: boolean;
+  outputOnly?: boolean;
+  customRun?: boolean;
   /** The problem's worked examples, as printed in the statement. The judge
    *  sends no input or expected output for a sample, and does not need to:
    *  the candidate already has both. */
@@ -220,7 +224,14 @@ export function ResultsPanel({
     );
   }
 
-  const summary = resultSummary(verdict, Boolean(compileFailed));
+  const summary = outputOnly
+    ? {
+        title: "Run complete",
+        tone: "unknown",
+        explanation: "No expected output was provided.",
+      }
+    : resultSummary(verdict, Boolean(compileFailed));
+  const judgedCount = customRun ? rows.filter((row) => row.verdict).length : rows.length;
   const headline = summary.title;
   const good = summary.tone === "success";
 
@@ -265,9 +276,9 @@ export function ResultsPanel({
             Memory: {Math.round(memoryKb / 1024)} MB
           </Text>
         )}
-        {rows.length > 0 && (
+        {judgedCount > 0 && (
           <Text type="supporting" color="secondary">
-            {rows.filter(passed).length}/{rows.length} passed
+            {rows.filter(passed).length}/{judgedCount} passed
           </Text>
         )}
       </HStack>
@@ -309,13 +320,13 @@ export function ResultsPanel({
           </Text>
           <pre style={codeBlock("var(--color-error)")}>{compilerText}</pre>
           {onJumpToCompilerError && (
-            <Text
-              type="supporting"
+            <Button
+              label="Go to the line"
+              variant="secondary"
+              size="sm"
               onClick={onJumpToCompilerError}
-              style={{ cursor: "pointer", textDecoration: "underline" }}
-            >
-              Go to the line
-            </Text>
+              style={{ alignSelf: "flex-start" }}
+            />
           )}
         </VStack>
       ) : (

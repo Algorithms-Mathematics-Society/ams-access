@@ -120,7 +120,7 @@ test("accepted receipt stays visible while the post-submit history request stall
 
 test("late Submit errors stay with the initiating question and session", () => {
   const start = client.indexOf("  const [submissionErrors, setSubmissionErrors]");
-  const end = client.indexOf("\n", client.indexOf("[runQuestionKey]: error", start));
+  const end = client.indexOf("  // Timer expiry", start);
   assert.ok(start >= 0 && end > start);
   const code = ts.transpileModule(client.slice(start, end), {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },

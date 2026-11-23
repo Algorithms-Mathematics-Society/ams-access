@@ -77,3 +77,11 @@ test("keyboard and assistive activation work, held activation keys are consumed"
   h.props.onClick({ detail: 0 });
   assert.equal(h.changes(), 2);
 });
+
+test("the theme icon applies CSS token sizing through its style", () => {
+  const icon = harness().props.icon;
+  assert.equal(icon.props.width, undefined);
+  assert.equal(icon.props.height, undefined);
+  assert.equal(icon.props.style.width, "var(--spacing-4)");
+  assert.equal(icon.props.style.height, "var(--spacing-4)");
+});

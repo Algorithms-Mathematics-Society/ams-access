@@ -932,11 +932,17 @@ export default function ContestPageClient() {
     if (isSubmitting && !prevSubmittingRef.current) setTerminalCollapsed(false);
     prevSubmittingRef.current = isSubmitting;
   }, [isSubmitting]);
-  const [submissionErrors, setSubmissionErrors] = useState<Record<string, string | null>>({});
-  const submissionError = submissionErrors[runQuestionKey] ?? null;
+  type SubmissionFailure = { message: string; clearOnRun: boolean };
+  const [submissionErrors, setSubmissionErrors] = useState<
+    Record<string, SubmissionFailure | null>
+  >({});
+  const submissionFailure = submissionErrors[runQuestionKey] ?? null;
+  const submissionError = submissionFailure?.message ?? null;
   // Async Submit handlers retain their original session/question key.
-  const setSubmissionError = (error: string | null) =>
+  const setSubmissionError = (message: string | null, clearOnRun = false) => {
+    const error = message === null ? null : { message, clearOnRun };
     setSubmissionErrors((previous) => ({ ...previous, [runQuestionKey]: error }));
+  };
   // Timer expiry auto-submit overlay state.
   const [timeUpState, setTimeUpState] = useState<"idle" | "submitting" | "submitted" | "error">(
     "idle"
@@ -2418,7 +2424,8 @@ export default function ContestPageClient() {
       [
         600, 1000, 1500, 2000, 2500, 3000, 3000, 3000, 3000, 3500, 4000, 4000, 5000, 5000, 5000,
         5000, 6000, 6000, 6000, 6000, 6000, 6000,
-      ]
+      ],
+      submissionFailure
     ).finally(() => {
       if (runVisit === runVisitRef.current) runInFlightRef.current = false;
     });
@@ -2432,7 +2439,8 @@ export default function ContestPageClient() {
     sessionId: string,
     attemptId: string,
     runVisit: number,
-    delays: number[]
+    delays: number[],
+    failureToClear: SubmissionFailure | null
   ) {
     for (const ms of delays) {
       await new Promise<void>((r) => setTimeout(r, ms));
@@ -2449,6 +2457,13 @@ export default function ContestPageClient() {
           patchRun(mode, { result: normalized });
           if (!isPendingSubmissionStatus(normalized.status)) {
             setIsRunning(false);
+            if (normalized.status === "AC" && failureToClear?.clearOnRun) {
+              setSubmissionErrors((previous) =>
+                previous[runQuestionKey] === failureToClear
+                  ? { ...previous, [runQuestionKey]: null }
+                  : previous
+              );
+            }
             // Verdict, sample results and any compiler messages all render in the
             // run pane; a run is never a row in the attempts list below it.
             // Run records carry their own results. The submissions endpoint
@@ -2481,7 +2496,14 @@ export default function ContestPageClient() {
     setRunMode(mode);
     patchRun(mode, { timedOut: false });
     setIsRunning(true);
-    void pollRun(mode, sessionId, attemptId, runVisit, [0, 2000, 4000]).finally(() => {
+    void pollRun(
+      mode,
+      sessionId,
+      attemptId,
+      runVisit,
+      [0, 2000, 4000],
+      runSourceChanged(mode) ? null : submissionFailure
+    ).finally(() => {
       if (runVisitRef.current === runVisit) runInFlightRef.current = false;
     });
   }
@@ -2580,7 +2602,7 @@ export default function ContestPageClient() {
       ? sourceWorkspaceError(submissionWorkspace)
       : attemptLimitError(snapshot.source);
     if (limitError) {
-      setSubmissionError(limitError);
+      setSubmissionError(limitError, true);
       return;
     }
     submitInFlightRef.current = true;
@@ -4810,7 +4832,8 @@ export default function ContestPageClient() {
   // Historical submissions omit source/file identity; only a matching run can navigate safely.
   const canJumpToCompilerError = Boolean(
     !isRunning &&
-    runResult &&
+    runResult?.status === "CE" &&
+    !runViews[runMode].sourceChanged &&
     compilerDiagnostic &&
     canNavigateDiagnostic(compilerDiagnostic, runSourceSnapshot, diagnosticContext)
   );

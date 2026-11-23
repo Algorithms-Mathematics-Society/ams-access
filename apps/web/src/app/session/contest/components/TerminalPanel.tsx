@@ -427,7 +427,12 @@ export function TerminalPanel({
           const compilerIsError = showRun
             ? view.result?.status === "CE"
             : (latestAttempt?.final_verdict ?? latestAttempt?.status) === "CE";
-          const status = view.status;
+          const outputOnly =
+            custom &&
+            view.result?.status === "AC" &&
+            (view.tests?.length ?? 0) > 0 &&
+            view.tests?.every((row) => !row.verdict) === true;
+          const status = outputOnly ? null : view.status;
           const paneLive = activeTab === runMode && isRunning;
 
           if (activeTab !== "all" && !custom) return null;
@@ -492,6 +497,8 @@ export function TerminalPanel({
                 memoryKb={showRun ? view.result?.memory_kb : latestAttempt?.memory_kb}
                 isRunning={showRun ? paneLive : submissionPending || latestAttemptPending}
                 submitted={!showRun}
+                outputOnly={outputOnly}
+                customRun={custom}
                 progressLabel={
                   showRun
                     ? (runProgressSteps[runProgressPhase] ?? runMetrics)
