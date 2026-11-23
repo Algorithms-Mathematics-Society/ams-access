@@ -14,11 +14,12 @@ set -euo pipefail
 for arg in "$@"; do
   case "$arg" in
     Dir::Etc::sourcelist=*) sources=${arg#*=} ;;
-    update) command=update ;;
-    --download-only) command=download ;;
-    --no-download) command=install ;;
+    update|install) command=$arg ;;
+    --download-only) download=download ;;
+    --no-download) exit 88 ;;
   esac
 done
+command=${download:-$command}
 grep -q 'signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg' "$sources"
 mirror=$(awk 'NR == 1 {print $3}' "$sources")
 printf '%s %s\n' "$command" "$mirror" >> "$TRACE"
