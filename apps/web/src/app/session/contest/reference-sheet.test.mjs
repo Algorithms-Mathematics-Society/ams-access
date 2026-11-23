@@ -366,7 +366,7 @@ for (const phase of ["running", "verification", "before_window"]) {
       label: "A",
       title: "Example",
       statement: { markdown: "Example" },
-      limits: {},
+      limits: { cpu_time_ms: 2000, wall_time_ms: 4000 },
       samples: [],
       assets: [],
       families: {},
@@ -388,6 +388,8 @@ for (const phase of ["running", "verification", "before_window"]) {
     const loaded = await context.exports.loadContestPaper("contest");
     assert.equal(loaded.index.reference_sheet.revision, phase === "running" ? 1 : 2);
     assert.equal(loaded.index.phase, "running");
+    assert.equal(loaded.questions[0].time_limit_ms, 2000);
+    assert.equal(loaded.questions[0].cxxprobe.limits.wall_time_ms, 4000);
     assert.deepEqual(
       Array.from(loaded.questions, (question) => question.id),
       phase === "running" ? ["A"] : ["A", "B"]

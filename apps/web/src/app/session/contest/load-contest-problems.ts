@@ -59,7 +59,7 @@ export function toCandidateQuestion(
     question_type: "coding",
     points: projection.score,
     judge_engine: "cxxprobe",
-    time_limit_ms: projection.limits.wall_time_ms || null,
+    time_limit_ms: projection.limits.cpu_time_ms || null,
     memory_limit_mb: projection.limits.memory_mb || null,
     samples: projection.samples,
     families: projection.families,
