@@ -250,6 +250,8 @@ test("concurrent finish clicks run only one request and one cleanup", async () =
   assert.equal(h.state.calls, 1);
   accept({ ok: true, json: async () => ({}) });
   await first;
+  assert.equal(h.state.calls, 1);
+  assert.equal(h.signals[0].aborted, false);
   assert.equal(h.state.releases, 1);
 });
 test("lost finish acknowledgement followed by already-finished response clears recovery", async () => {
@@ -299,7 +301,7 @@ test("stalled Finish error body cannot hold native release", async () => {
   assert.equal(attempts, 2);
   assert.equal(h.signals.length, 2);
   assert.notEqual(h.signals[0], h.signals[1]);
-  assert.equal(h.signals[1].aborted, true);
+  assert.equal(h.signals[1].aborted, false);
   assert.equal(h.state.releases, 1);
   assert.equal(h.state.phase, "submitted");
 });

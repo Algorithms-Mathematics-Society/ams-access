@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { finishedContestKey } from "../../../constants/storage-keys.ts";
 import {
   SETUP_ATTEMPT_KEY,
   setupAttemptId,
@@ -140,6 +141,7 @@ function fixture({
   persistFails = false,
 } = {}) {
   const calls = [];
+  const removed = [];
   const saved = storage();
   const context = {
     contestId: "contest",
@@ -154,6 +156,8 @@ function fixture({
     approvalRequestPendingRef: { current: false },
     authState: { current: 0 },
     authGeneration: () => context.authState.current,
+    currentParticipantUid: () => "participant",
+    finishedContestKey,
     setSetupGate(value) {
       context.setupGateRef.current = value;
       calls.push(value.kind);
@@ -179,6 +183,7 @@ function fixture({
       return request?.();
     },
     localStorage: {
+      removeItem: (key) => removed.push(key),
       setItem(key, value) {
         if (persistFails) throw Error("full");
         calls.push([key, JSON.parse(value)]);
@@ -189,11 +194,25 @@ function fixture({
   return {
     context,
     calls,
+    removed,
     authorize: evaluate(named("authorizeSetup"), context),
     request: evaluate(named("requestSetupApproval"), context),
     gate: () => context.setupGateRef.current,
   };
 }
+
+test("only an authorized re-entry clears the participant's contest finish receipt", async () => {
+  const allowed = fixture();
+  await allowed.authorize();
+  assert.deepEqual(allowed.removed, [finishedContestKey("participant", "contest")]);
+  const blocked = fixture({
+    start: async () => {
+      throw approvalError;
+    },
+  });
+  await blocked.authorize();
+  assert.deepEqual(blocked.removed, []);
+});
 function probes(gate) {
   const calls = [];
   const context = {

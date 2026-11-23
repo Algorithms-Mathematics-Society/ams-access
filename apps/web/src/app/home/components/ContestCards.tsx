@@ -291,13 +291,17 @@ export const ActiveContestCard = memo(
     }
 
     const entryState = useMemo(() => getContestEntryState(c, now), [c, now]);
-    const canEnter = entryState.canEnter;
+    const finished =
+      c.session_finished === true &&
+      !c.is_practice &&
+      (entryState.phase === "live" || entryState.phase === "ended");
+    const canEnter = entryState.canEnter && !finished;
 
     // Preserve organizer-facing release timing on Home. The results page
     // continues to use the existing own-submissions endpoint and access paths.
     const resultsVisibleAt = c.results_visible_at ? new Date(c.results_visible_at).getTime() : null;
     const resultsUnlocked = resultsVisibleAt !== null && now >= resultsVisibleAt;
-    const resultsReady = entryState.phase === "ended" && resultsUnlocked;
+    const resultsReady = finished || (entryState.phase === "ended" && resultsUnlocked);
     const resultsLockedCountdown = useMemo(() => {
       if (!resultsVisibleAt || resultsUnlocked) return null;
       const diff = resultsVisibleAt - now;
@@ -360,6 +364,7 @@ export const ActiveContestCard = memo(
 
     // Human-readable status for the single meta line.
     const metaStatus = (() => {
+      if (finished) return "Your recorded attempts are available";
       if (entryState.phase === "ended") {
         if (resultsUnlocked) return "Your recorded attempts are available";
         if (resultsLockedCountdown) return `Results available in ${resultsLockedCountdown}`;
@@ -374,7 +379,7 @@ export const ActiveContestCard = memo(
     const showHelper = ["blocked", "metadata_unavailable", "draft"].includes(entryState.phase);
 
     const statusColor =
-      entryState.phase === "live" && !c.is_practice
+      entryState.phase === "live" && !c.is_practice && !finished
         ? "green"
         : entryState.phase === "blocked" || entryState.phase === "metadata_unavailable"
           ? "red"
@@ -403,7 +408,13 @@ export const ActiveContestCard = memo(
         <VStack gap={3} style={{ minWidth: 0 }}>
           <HStack gap={3} wrap="wrap" align="center">
             <Token
-              label={entryState.phase === "draft" ? "Not published yet" : entryState.statusLabel}
+              label={
+                finished
+                  ? "Finished"
+                  : entryState.phase === "draft"
+                    ? "Not published yet"
+                    : entryState.statusLabel
+              }
               color={statusColor}
               size="sm"
             />
@@ -475,7 +486,7 @@ export const ActiveContestCard = memo(
             label={
               entering
                 ? "Opening..."
-                : entryState.phase === "ended"
+                : finished || entryState.phase === "ended"
                   ? "View my submissions"
                   : entryState.phase === "draft"
                     ? "Not published yet"

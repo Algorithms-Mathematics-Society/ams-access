@@ -26,3 +26,7 @@ export const STORAGE_KEYS = {
 
   THEME: "ams_theme",
 } as const;
+
+/** Presentation only. The server still authorizes any new exam entry. */
+export const finishedContestKey = (participantId: string, contestId: string) =>
+  `ams_finished_contest:${participantId}:${contestId}`;

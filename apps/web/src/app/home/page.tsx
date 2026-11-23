@@ -17,13 +17,15 @@ import { useTheme } from "@/lib/theme";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
 import { supportsTeamDesktopWebView, TEAM_PLATFORM_MESSAGE } from "@/lib/team-platform";
 import { probeTeamRound, TEAM_WRONG_CONTEST_MESSAGE } from "@/lib/team-lobby";
-import { STORAGE_KEYS } from "@/constants/storage-keys";
+import { STORAGE_KEYS, finishedContestKey } from "@/constants/storage-keys";
 import {
   authGeneration,
+  currentParticipantUid,
   subscribeAuthChanges,
   type ContestSummary,
   ProctorApiError,
   getContest,
+  getMyContestSession,
   getSession,
   hasToken,
   latestResumeRequest,
@@ -32,6 +34,7 @@ import {
   noteListServerTime,
   requestResume,
   restoreToken,
+  serverNow,
 } from "@/lib/proctor-api";
 
 // ── Types ──────────────────────────────────────────────────────
@@ -55,6 +58,7 @@ import {
   TELEMETRY_STALE_MS,
   ACTIVE_SESSION_KEY,
   EMPTY_TELEMETRY,
+  getContestEntryState,
   getOrCreateDeviceId,
   getBrowserMediaAvailability,
   fetchWithTimeout,
@@ -204,6 +208,7 @@ export default function HomePage() {
   const [contestsLoading, setContestsLoading] = useState(true);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [sessionsRefreshing, setSessionsRefreshing] = useState(false);
+  const contestRefreshInFlightRef = useRef(false);
   const [activeSession, setActiveSessionState] = useState<ActiveSession | null>(null);
   const activeSessionRef = useRef<ActiveSession | null>(null);
   const setActiveSession = useCallback((session: ActiveSession | null) => {
@@ -410,24 +415,55 @@ export default function HomePage() {
 
   const loadContests = useCallback(
     async (mode: "initial" | "refresh" = "refresh") => {
+      if (contestRefreshInFlightRef.current) return;
+      contestRefreshInFlightRef.current = true;
+      const participant = currentParticipantUid();
+      const generation = authGeneration();
       if (mode === "initial") setContestsLoading(true);
       else setSessionsRefreshing(true);
       appendSecurityEvent("SESSION: Contest list refresh requested");
       setSessionsError(null);
       try {
         const data = await invitedContestsQuery.mutate();
+        if (authGeneration() !== generation) return;
         if (data) {
-          setContests(data);
+          if (mode === "refresh" && participant) {
+            // Check only local receipts that currently suppress a live entry.
+            for (const contest of data) {
+              if (authGeneration() !== generation) return;
+              if (contest.is_practice || !getContestEntryState(contest, serverNow()).canEnter)
+                continue;
+              try {
+                const key = finishedContestKey(participant, contest.id);
+                const receipt = localStorage.getItem(key);
+                if (!receipt) continue;
+                const session = await getMyContestSession(contest.id);
+                if (authGeneration() !== generation) return;
+                if (
+                  session &&
+                  session.contest_uid === contest.id &&
+                  session.status !== "submitted" &&
+                  localStorage.getItem(key) === receipt
+                )
+                  localStorage.removeItem(key);
+              } catch {
+                // Keep the confirmed receipt while its current state is unavailable.
+              }
+            }
+          }
+          if (authGeneration() !== generation) return;
+          setContests([...data]);
           appendSecurityEvent(
             "SESSION: Contest list refresh completed (" + data.length + " records)"
           );
         }
       } catch {
-        if (mode === "refresh") {
+        if (mode === "refresh" && authGeneration() === generation) {
           setSessionsError("Could not refresh sessions. Check your connection and try again.");
           appendSecurityEvent("SESSION: Contest list refresh failed", "error");
         }
       } finally {
+        contestRefreshInFlightRef.current = false;
         setContestsLoading(false);
         setSessionsRefreshing(false);
       }
@@ -437,6 +473,19 @@ export default function HomePage() {
   const refreshContests = useCallback(() => {
     void loadContests();
   }, [loadContests]);
+  const contestsWithFinishStatus = useMemo(() => {
+    const participant = identityHydrated ? currentParticipantUid() : null;
+    if (!participant) return contests;
+    try {
+      return contests.map((contest) =>
+        !contest.is_practice && localStorage.getItem(finishedContestKey(participant, contest.id))
+          ? { ...contest, session_finished: true }
+          : contest
+      );
+    } catch {
+      return contests;
+    }
+  }, [contests, identityHydrated]);
   const [teamEntryMessage, setTeamEntryMessage] = useState<string | null>(null);
   const [unsupportedTeamDevice, setUnsupportedTeamDevice] = useState(false);
   const teamEntryProbe = useRef<AbortController | null>(null);
@@ -1156,7 +1205,7 @@ export default function HomePage() {
       onRefresh={refreshContests}
       refreshing={sessionsRefreshing}
       highlightedContestId={highlightedContestId}
-      contests={contests}
+      contests={contestsWithFinishStatus}
       loading={contestsLoading}
       theme={theme}
       searchQuery={contestSearch}

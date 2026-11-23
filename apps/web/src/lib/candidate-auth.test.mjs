@@ -17,7 +17,7 @@ import { createRequire } from "node:module";
 
 import { authHeaders, participantToken } from "./candidate-auth.ts";
 import { createDeviceRelease, releaseRestoreStatus } from "./release-device-controls.ts";
-import { STORAGE_KEYS } from "../constants/storage-keys.ts";
+import { STORAGE_KEYS, finishedContestKey } from "../constants/storage-keys.ts";
 import { bufferKey, isBufferKey } from "../app/session/contest/answer-buffer.ts";
 import { AUTH_RECHECK_MS, onUnauthorized } from "../app/session/contest/auth-loss.ts";
 import {
@@ -528,6 +528,8 @@ function contestExitFixture(fail = "", browser = false, hang = "") {
       }
     },
     STORAGE_KEYS,
+    finishedContestKey,
+    currentParticipantUid: () => "participant-1",
     redirectInFlightRef: { current: false },
     leavingWorkspaceRef: { current: false },
     setLeaveConfirm() {},
@@ -891,12 +893,17 @@ test("confirmed finish only removes the matching serialized recovery record", as
   await fixture.runExitTeardown(false);
   assert.equal(localStorage.getItem("ams_active_session"), null);
   assert.equal(JSON.parse(localStorage.getItem(STORAGE_KEYS.LAST_SESSION)).id, "session-1");
+  const key = finishedContestKey("participant-1", "contest");
+  assert.equal(JSON.parse(localStorage.getItem(key)).id, "session-1");
+  assert.equal(localStorage.getItem(finishedContestKey("participant-2", "contest")), null);
+  assert.equal(localStorage.getItem(finishedContestKey("participant-1", "other")), null);
   localStorage.setItem(
     "ams_active_session",
     JSON.stringify({ id: "newer-session", contest_id: "contest" })
   );
   await fixture.runExitTeardown(false);
   assert.equal(JSON.parse(localStorage.getItem("ams_active_session")).id, "newer-session");
+  assert.equal(JSON.parse(localStorage.getItem(key)).id, "session-1");
 });
 
 test("failed release while finish is pending remains retryable without restarting finish", async () => {

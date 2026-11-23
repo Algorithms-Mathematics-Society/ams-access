@@ -32,10 +32,12 @@ import {
   type OrganizerOverride,
 } from "@ams/api-client";
 import { authHeaders, participantToken } from "@/lib/candidate-auth";
+import { finishedContestKey } from "@/constants/storage-keys";
 import { readVoiceTeam } from "@/lib/team-voice-api";
 import {
   getContest,
   authGeneration,
+  currentParticipantUid,
   subscribeAuthChanges,
   latestResumeRequest,
   requestResume,
@@ -320,6 +322,14 @@ export default function OnboardingPage() {
               updated_at: new Date().toISOString(),
             })
           );
+          const participant = currentParticipantUid();
+          if (participant) {
+            try {
+              localStorage.removeItem(finishedContestKey(participant, contestId));
+            } catch {
+              // The receipt is only used by Home and does not authorize setup.
+            }
+          }
         } else {
           // Recovery metadata is presentation only. The next POST still authorizes setup.
           localStorage.setItem(
@@ -1728,7 +1738,8 @@ export default function OnboardingPage() {
                           ? setupGate.request
                             ? approvalMessage(
                                 setupGate.request.status,
-                                setupGate.request.review_note
+                                setupGate.request.review_note,
+                                "setup"
                               )
                             : "Ask for organizer approval before running the device checks."
                           : ""

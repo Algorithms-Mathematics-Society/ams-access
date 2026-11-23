@@ -4,10 +4,99 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
 import { approvalMessage } from "./components/approval-feedback.ts";
+import { finishedContestKey } from "../../constants/storage-keys.ts";
 const source = readFileSync(new URL("./page.tsx", import.meta.url), "utf8").replaceAll(
   "\r\n",
   "\n"
 );
+const refreshStart = source.indexOf("  const loadContests = useCallback(");
+const refreshEnd = source.indexOf("  const refreshContests = useCallback(", refreshStart);
+const refreshCode = ts.transpileModule(source.slice(refreshStart, refreshEnd), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
+
+function contestRefreshFixture(lookup) {
+  const contests = [
+    { id: "finished", live: true },
+    { id: "reset", live: true },
+    { id: "unknown", live: true },
+    { id: "without-receipt", live: true },
+    { id: "practice", live: true, is_practice: true },
+    { id: "ended", live: false },
+  ];
+  const key = (id) => finishedContestKey("participant", id);
+  const receipts = new Map(
+    contests.filter((contest) => contest.id !== "without-receipt").map(({ id }) => [key(id), id])
+  );
+  const reads = [];
+  const applied = [];
+  let generation = 0;
+  const context = {
+    useCallback: (fn) => fn,
+    contestRefreshInFlightRef: { current: false },
+    invitedContestsQuery: { mutate: async () => contests },
+    currentParticipantUid: () => "participant",
+    authGeneration: () => generation,
+    finishedContestKey,
+    localStorage: {
+      getItem: (key) => receipts.get(key),
+      removeItem: (key) => receipts.delete(key),
+    },
+    serverNow: () => 0,
+    getContestEntryState: (contest) => ({ canEnter: contest.live }),
+    getMyContestSession: async (id) => {
+      reads.push(id);
+      return lookup(id);
+    },
+    setContests: (value) => applied.push(value),
+    appendSecurityEvent() {},
+    setContestsLoading() {},
+    setSessionsRefreshing() {},
+    setSessionsError() {},
+  };
+  return {
+    key,
+    receipts,
+    reads,
+    applied,
+    changeAccount: () => generation++,
+    refresh: new Function(...Object.keys(context), `${refreshCode}; return loadContests;`)(
+      ...Object.values(context)
+    ),
+  };
+}
+
+test("explicit Home refresh clears only receipts invalidated by a known session response", async () => {
+  const h = contestRefreshFixture((id) =>
+    id === "unknown" ? null : { contest_uid: id, status: id === "reset" ? "active" : "submitted" }
+  );
+  await h.refresh();
+  assert.deepEqual(h.reads, ["finished", "reset", "unknown"]);
+  assert.equal(h.receipts.has(h.key("reset")), false);
+  for (const id of ["finished", "unknown", "practice", "ended"])
+    assert.equal(h.receipts.has(h.key(id)), true);
+  assert.equal(h.applied.length, 1);
+});
+
+test("a superseded account refresh stops receipt reads even if its last lookup rejects", async () => {
+  let reject;
+  const h = contestRefreshFixture(
+    () =>
+      new Promise((_, fail) => {
+        reject = fail;
+      })
+  );
+  const refresh = h.refresh();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(reject);
+  await h.refresh();
+  h.changeAccount();
+  reject(Error("old request failed"));
+  await refresh;
+  assert.deepEqual(h.reads, ["finished"]);
+  assert.deepEqual(h.applied, []);
+  assert.equal(h.receipts.has(h.key("finished")), true);
+});
 const requestStart = source.indexOf("  async function submitResumeRequest(");
 const requestEnd = source.indexOf("\n  async function validateStoredActiveSession(", requestStart);
 assert.ok(requestStart >= 0 && requestEnd > requestStart);
