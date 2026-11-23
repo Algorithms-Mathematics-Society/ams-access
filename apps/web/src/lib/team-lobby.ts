@@ -1,3 +1,4 @@
+import { jitteredDelayMs, retryAfterSeconds } from "./retry-jitter.ts";
 import { parseTeamVote, voteRemainingMs, type TeamVote } from "./team-vote.ts";
 /** Published participant projection only. Never infer allocation from local actions. */
 export type TeamLobbyBoard = {
@@ -268,7 +269,10 @@ export function createTeamLobbyController(options: {
     active: AbortController | undefined,
     queued = false,
     forceRefresh = false,
-    deadlineWoken: string | null = null;
+    deadlineWoken: string | null = null,
+    // Consecutive failed polls and the server's last Retry-After, for back-off.
+    pollFailures = 0,
+    serverWaitMs = 0;
   const emit = (patch: Partial<LobbyState>) => {
     if (!stopped) {
       state = { ...state, ...patch };
@@ -278,9 +282,19 @@ export function createTeamLobbyController(options: {
   const schedule = () => {
     if (stopped || terminal) return;
     clearTimeout(timer);
+    const random = options.random ?? Math.random;
+    // After a failure the whole room failed together: spread the retries out
+    // and widen the window each time, never sooner than the server asked.
     let delay = options.hidden()
-      ? 15000
-      : 3000 + Math.floor(Math.max(0, Math.min(1, (options.random ?? Math.random)())) * 2000);
+      ? Math.max(15000, serverWaitMs)
+      : pollFailures > 0
+        ? jitteredDelayMs(pollFailures - 1, {
+            baseMs: 3000,
+            capMs: 30_000,
+            floorMs: Math.max(3000, serverWaitMs),
+            random,
+          })
+        : 3000 + Math.floor(Math.max(0, Math.min(1, random())) * 2000);
     const deadline = state.board && nextDeadline(state.board);
     if (deadline && deadline !== deadlineWoken) {
       const remaining = countdownMs(state.board!, state.sampledAt, now())!;
@@ -335,6 +349,12 @@ export function createTeamLobbyController(options: {
         cache: "no-store",
       });
       if (stopped) return;
+      if (!action) {
+        // Any answer but overload clears the back-off; overload keeps its wait.
+        const overloaded = response.status === 429 || response.status >= 500;
+        pollFailures = overloaded ? pollFailures : 0;
+        serverWaitMs = overloaded ? retryAfterSeconds(response.headers) * 1000 : 0;
+      }
       if (response.status === 304) return;
       const body: unknown = await response.json().catch(() => null);
       if (stopped) return;
@@ -407,6 +427,7 @@ export function createTeamLobbyController(options: {
         queued = true;
         return;
       }
+      if (!action) pollFailures++;
       emit({
         error:
           // fetch rejects with a TypeError when no HTTP response arrived; its
