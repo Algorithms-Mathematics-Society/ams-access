@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { stopsDraftBackup } from "./draft-workspace.ts";
 const source = readFileSync(new URL("./client.tsx", import.meta.url), "utf8");
 const start = source.indexOf(
   "  useEffect(() => {",
@@ -16,7 +17,10 @@ const flush = async () => {
   for (let i = 0; i < 8; i++) await Promise.resolve();
 };
 class ApiError extends Error {
-  status = 403;
+  constructor(status) {
+    super();
+    this.status = status;
+  }
 }
 function harness() {
   let tick,
@@ -43,7 +47,7 @@ function harness() {
       });
     },
     ProctorApiError: ApiError,
-    stopsDraftBackup: () => true,
+    stopsDraftBackup,
     useEffect: (f) => {
       cleanup = f();
     },
@@ -62,7 +66,7 @@ function harness() {
     stop: () => cleanup(),
     calls: () => calls,
     resolve: () => resolve({ source: "draft", language: "cpp", client_revision: 1 }),
-    reject: () => reject(new ApiError()),
+    reject: (status = 409) => reject(new ApiError(status)),
   };
 }
 test("slow backups stay single-flight across ticks and effect replacement", async () => {
@@ -102,4 +106,16 @@ test("a current permanent failure still stops backups", async () => {
   assert.equal(h.context.draftBackupOffRef.current, true);
   h.tick();
   assert.equal(h.calls(), 1);
+});
+test("the next backup sends the draft after a transient network failure", async () => {
+  const h = harness();
+  h.tick();
+  h.reject(0);
+  await flush();
+  assert.equal(h.context.draftBackupOffRef.current, false);
+  h.tick();
+  assert.equal(h.calls(), 2);
+  h.resolve();
+  await flush();
+  assert.equal(h.context.serverDraftRef.current.p1, "cpp\ndraft");
 });

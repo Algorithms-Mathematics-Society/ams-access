@@ -3504,8 +3504,7 @@ export default function ContestPageClient() {
 
   // Background backup of the device buffer to the server, only for problems
   // whose answer changed since the server last accepted one. It never blocks
-  // and never shows an error; a failure that will not clear by itself (no
-  // route to the server, or drafts closed) stops it for this session.
+  // and never shows an error. Closed drafts stop backup for the session.
   useEffect(() => {
     if (!sessionId || questions.length === 0) return;
     let cancelled = false;

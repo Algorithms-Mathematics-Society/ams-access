@@ -132,10 +132,9 @@ test("backup sends the active answer only when the server does not already hold 
   assert.equal(draftBackup(null, undefined), null);
 });
 
-test("backup stops for the session only on no connection or closed drafts", () => {
-  assert.equal(stopsDraftBackup(0), true);
+test("backup stops for the session only on closed drafts", () => {
   assert.equal(stopsDraftBackup(409), true);
-  for (const status of [401, 422, 429, 500, 503]) assert.equal(stopsDraftBackup(status), false);
+  for (const status of [0, 401, 422, 429, 500, 503]) assert.equal(stopsDraftBackup(status), false);
 });
 
 test("language-only change is recovered even if source matches", () => {
