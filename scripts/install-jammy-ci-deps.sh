@@ -4,6 +4,11 @@ set -euo pipefail
 sources=$(mktemp --suffix=.list)
 trap 'rm -f "$sources"' EXIT
 
+as_root=()
+if (( EUID != 0 )); then
+  as_root=(sudo)
+fi
+
 apt_options=(
   -o "Dir::Etc::sourcelist=$sources"
   -o Dir::Etc::sourceparts=-
@@ -21,9 +26,9 @@ for mirror in https://archive.ubuntu.com/ubuntu https://mirrors.edge.kernel.org/
   printf "deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] %s %s main restricted universe multiverse\n" \
     "$mirror" jammy "$mirror" jammy-updates "$mirror" jammy-security > "$sources"
 
-  if sudo timeout 150 apt-get "${apt_options[@]}" --no-list-cleanup -o APT::Update::Error-Mode=any update &&
-    sudo timeout 320 apt-get "${apt_options[@]}" --download-only "${install[@]}"; then
-    sudo timeout 180 apt-get "${apt_options[@]}" --no-download "${install[@]}"
+  if "${as_root[@]}" timeout 150 apt-get "${apt_options[@]}" --no-list-cleanup -o APT::Update::Error-Mode=any update &&
+    "${as_root[@]}" timeout 320 apt-get "${apt_options[@]}" --download-only "${install[@]}"; then
+    "${as_root[@]}" timeout 180 apt-get "${apt_options[@]}" --no-download "${install[@]}"
     exit
   fi
   echo "Could not fetch all required Jammy packages from $mirror."
