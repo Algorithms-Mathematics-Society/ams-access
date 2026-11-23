@@ -490,19 +490,21 @@ function contestExitHandlers(context) {
   function visit(node) {
     if (
       ts.isFunctionDeclaration(node) &&
-      ["withTimeout", "runExitTeardown", "redirectAfterRelease"].includes(node.name?.text)
+      ["withTimeout", "runExitTeardown", "redirectAfterRelease", "leaveMovedSession"].includes(
+        node.name?.text
+      )
     )
       handlers.push(node);
     ts.forEachChild(node, visit);
   }
   visit(ast);
-  assert.equal(handlers.length, 3);
+  assert.equal(handlers.length, 4);
   const js = ts.transpileModule(handlers.map((handler) => handler.getText(ast)).join("\n"), {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   }).outputText;
   return new Function(
     ...Object.keys(context),
-    `${js}; return {runExitTeardown, redirectAfterRelease};`
+    `${js}; return {runExitTeardown, redirectAfterRelease, leaveMovedSession};`
   )(...Object.values(context));
 }
 
@@ -516,6 +518,7 @@ function contestExitFixture(fail = "", browser = false, hang = "") {
     setTimeout: (callback, delay) => setTimeout(callback, hang ? 1 : delay),
     clearTimeout,
     ACTIVE_SESSION_KEY: "ams_active_session",
+    MOVED_SESSION_HOME: "/home?handoff=complete",
     sessionId: "session-1",
     readStoredSession: () => {
       try {
@@ -594,6 +597,18 @@ function contestExitFixture(fail = "", browser = false, hang = "") {
   context.releaseRestoreStatus = releaseRestoreStatus;
   return { ...contestExitHandlers(context), calls, context, error: () => error };
 }
+
+test("a moved session saves drafts and releases the old device before navigation", async () => {
+  localStorage.setItem("ams_active_session", JSON.stringify({ id: "session-1" }));
+  const fixture = contestExitFixture();
+  await fixture.leaveMovedSession("session-1");
+  assert.equal(localStorage.getItem("ams_active_session"), null);
+  assert.equal(fixture.calls[0], "save");
+  assert.ok(fixture.calls.includes("unlock_desktop"));
+  assert.ok(fixture.calls.includes("configure_event_stream"));
+  assert.ok(!fixture.calls.includes("identity-photo"));
+  assert.equal(fixture.calls.at(-1), "redirect:/home?handoff=complete");
+});
 
 test("exit releases native controls while the captured identity photo is still uploading", async () => {
   const fixture = contestExitFixture();

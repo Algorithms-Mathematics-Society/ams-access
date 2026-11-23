@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getSession, ProctorApiError } from "./proctor-api.ts";
+import { getSession, heartbeat, ProctorApiError, setToken } from "./proctor-api.ts";
 
 async function failWith(t, status, body, headers = {}) {
   t.mock.method(
@@ -39,6 +39,32 @@ test("a 500 keeps the server's request id as a reference", async (t) => {
 test("a plain string detail still passes through", async (t) => {
   const error = await failWith(t, 409, { detail: "session is submitted" });
   assert.equal(error.message, "session is submitted");
+});
+
+test("heartbeat sends the persisted device ID and reads the handoff response", async (t) => {
+  const values = new Map([["ams_device_id", "device-before-handoff"]]);
+  const storage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+      removeItem: (key) => values.delete(key),
+    },
+  });
+  t.after(() => {
+    setToken(null);
+    if (storage) Object.defineProperty(globalThis, "localStorage", storage);
+    else delete globalThis.localStorage;
+  });
+  setToken("participant-token");
+  const message = "This exam session continued on another device.";
+  const code = "SESSION_DEVICE_MISMATCH";
+  const request = t.mock.method(globalThis, "fetch", async () =>
+    Response.json({ detail: { code, error: message } }, { status: 409 })
+  );
+  await assert.rejects(() => heartbeat("s1"), { status: 409, code, message });
+  assert.equal(request.mock.calls[0].arguments[1].headers["X-Device-Id"], "device-before-handoff");
 });
 
 test("overload request references preserve Retry-After for login and approval recovery", async (t) => {

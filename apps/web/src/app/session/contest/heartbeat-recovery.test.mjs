@@ -36,6 +36,7 @@ function harness(random = 0.5) {
   const requests = [];
   const contestRequests = [];
   const redirects = [];
+  const movedSessions = [];
   const intervals = [];
   const timers = [];
   const retryBeatRef = { current: () => {} };
@@ -50,9 +51,10 @@ function harness(random = 0.5) {
   const unauthorizedAtRef = { current: null };
   const clock = { now: Date.now() };
   class ProctorApiError extends Error {
-    constructor(status) {
+    constructor(status, code = "") {
       super(`HTTP ${status}`);
       this.status = status;
+      this.code = code;
     }
   }
   const state = {
@@ -101,6 +103,7 @@ function harness(random = 0.5) {
     serverNow: () => Date.now(),
     handleContestExpiry: () => assert.fail("live contest must not expire"),
     redirectAfterRelease: (destination) => redirects.push(destination),
+    leaveMovedSession: (id) => movedSessions.push(id),
     ProctorApiError,
     setInterval: (callback, period) => {
       intervals.push({ callback, period });
@@ -125,6 +128,7 @@ function harness(random = 0.5) {
     requests,
     contestRequests,
     redirects,
+    movedSessions,
     intervals,
     timers,
     referenceRevisionRef,
@@ -163,6 +167,19 @@ function harness(random = 0.5) {
 const flush = async () => {
   for (let i = 0; i < 8; i++) await Promise.resolve();
 };
+
+test("device handoff leaves the workspace once and stops the heartbeat", async () => {
+  const h = harness();
+  const stop = h.start(true);
+  h.requests[0].reject(new h.ProctorApiError(409, "SESSION_DEVICE_MISMATCH"));
+  await flush();
+  assert.deepEqual(h.movedSessions, ["session-A"]);
+  h.intervals[0].callback();
+  h.retryBeatRef.current();
+  assert.equal(h.requests.length, 1);
+  assert.deepEqual(h.redirects, []);
+  stop();
+});
 const live = (status = "active") => ({
   phase: "coding",
   ends_at: "2030-01-01T12:00:00Z",
