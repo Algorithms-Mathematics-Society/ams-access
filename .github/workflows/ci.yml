@@ -45,12 +45,19 @@ jobs:
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
+        with:
+          version: v0.19.0
+          disable_annotations: true
 
       - name: Configure sccache
         shell: bash
         run: |
-          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          if SCCACHE_GHA_ENABLED=true sccache rustc -vV; then
+            printf '%s\n' 'RUSTC_WRAPPER=sccache' 'SCCACHE_GHA_ENABLED=true' >> "$GITHUB_ENV"
+          else
+            echo "::warning::sccache did not start. Rust will compile directly."
+          fi
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
@@ -325,12 +332,19 @@ jobs:
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
+        with:
+          version: v0.19.0
+          disable_annotations: true
 
       - name: Configure sccache
         shell: bash
         run: |
-          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          if SCCACHE_GHA_ENABLED=true sccache rustc -vV; then
+            printf '%s\n' 'RUSTC_WRAPPER=sccache' 'SCCACHE_GHA_ENABLED=true' >> "$GITHUB_ENV"
+          else
+            echo "::warning::sccache did not start. Rust will compile directly."
+          fi
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
@@ -679,12 +693,19 @@ jobs:
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
+        with:
+          version: v0.19.0
+          disable_annotations: true
 
       - name: Configure sccache
         shell: bash
         run: |
-          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          if SCCACHE_GHA_ENABLED=true sccache rustc -vV; then
+            printf '%s\n' 'RUSTC_WRAPPER=sccache' 'SCCACHE_GHA_ENABLED=true' >> "$GITHUB_ENV"
+          else
+            echo "::warning::sccache did not start. Rust will compile directly."
+          fi
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
