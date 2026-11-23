@@ -60,11 +60,28 @@ function harness() {
       };
       return visit(tree)?.props;
     },
-    render(tests, isRunning = true) {
+    render(tests, isRunning = true, props = {}) {
       effect = undefined;
-      tree = context.exports.ResultsPanel({ tests, isRunning, emptyHint: "", verdict: "WA" });
+      tree = context.exports.ResultsPanel({
+        tests,
+        isRunning,
+        emptyHint: "",
+        verdict: "WA",
+        ...props,
+      });
       effect?.();
       return selected;
+    },
+    visibleText() {
+      const text = (node) =>
+        Array.isArray(node)
+          ? node.map(text).join("")
+          : typeof node === "string" || typeof node === "number"
+            ? String(node)
+            : node && typeof node === "object"
+              ? text(node.props?.children)
+              : "";
+      return text(tree);
     },
   };
 }
@@ -149,4 +166,27 @@ test("case arrows focus and reveal only the case strip; refreshed results do not
   h.render(rows(), false);
   assert.equal(focused.length, focusCount);
   assert.equal(prevented, 3);
+});
+
+test("output-only custom runs show completion without a pass count", () => {
+  const h = harness();
+  h.render([{ verdict: null, stdout_text: "custom output" }], false, {
+    verdict: "AC",
+    outputOnly: true,
+    customRun: true,
+  });
+  assert.match(h.visibleText(), /Run complete/);
+  assert.match(h.visibleText(), /No expected output was provided/);
+  assert.doesNotMatch(h.visibleText(), /Accepted|passed/);
+});
+
+test("unjudged output is excluded from the pass count in a mixed run", () => {
+  const h = harness();
+  h.render([{ verdict: "AC" }, { verdict: null, stdout_text: "custom output" }], false, {
+    verdict: "AC",
+    customRun: true,
+  });
+  assert.match(h.visibleText(), /1\/1 passed/);
+  h.render([{ verdict: "RE" }], false, { verdict: "RE" });
+  assert.match(h.visibleText(), /Runtime error/);
 });

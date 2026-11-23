@@ -34,8 +34,7 @@ export function ThemeToggle({ className }: { className?: string }) {
       size="md"
       icon={
         <svg
-          width="var(--spacing-4)"
-          height="var(--spacing-4)"
+          style={{ width: "var(--spacing-4)", height: "var(--spacing-4)" }}
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"

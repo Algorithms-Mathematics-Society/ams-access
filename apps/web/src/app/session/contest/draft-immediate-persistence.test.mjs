@@ -124,6 +124,7 @@ function fixture(overrides = {}) {
     setIsRunning: () => {},
     resetRunPanelState: () => {},
     setSubmitError: () => {},
+    submissionFailure: null,
     setRunSourceSnapshot: (value) => (state.runSourceSnapshot = value),
     runAgainstSamples: async (_session, payload) => {
       state.runPayload = payload;

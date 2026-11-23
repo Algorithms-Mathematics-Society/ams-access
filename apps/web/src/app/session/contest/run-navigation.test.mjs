@@ -27,13 +27,17 @@ const end = source.indexOf("  const [questionCustomCases", start);
 assert.ok(start >= 0 && end > start);
 const lifecycleStart = source.indexOf("  // Leaving the session cancels");
 const lifecycleEnd = source.indexOf("  // PRIMARY", lifecycleStart);
+const submitErrorsStart = source.indexOf("  type SubmissionFailure");
+const submitErrorsEnd = source.indexOf("  // Timer expiry", submitErrorsStart);
+assert.ok(submitErrorsStart >= 0 && submitErrorsEnd > submitErrorsStart);
 const compiled = ts.transpileModule(
   `function render(sessionId, activeQ) {
   ${source.slice(start, end)}
   ${source.slice(lifecycleStart, lifecycleEnd)}
+  ${source.slice(submitErrorsStart, submitErrorsEnd)}
   const currentQId = questions[activeQ].id;
   ${["resetRunPanelState", "switchQuestion", "triggerRun", "pollRun", "recheckRun", "runSourceChanged"].map(handler).join("\n")}
-  return { triggerRun, switchQuestion, recheckRun, runSlices, runMode, isRunning, runningQuestionKey, runSourceSnapshot, runSourceChanged };
+  return { triggerRun, switchQuestion, recheckRun, runSlices, runMode, isRunning, runningQuestionKey, runSourceSnapshot, runSourceChanged, submissionError, setSubmissionError };
 }`,
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } }
 ).outputText;
@@ -298,4 +302,38 @@ test("3000 client lifecycles keep navigation request-free and Run polling bounde
   }
   assert.equal(posts, 3000);
   assert.equal(polls, 66000);
+});
+
+test("a successful Run clears its earlier source refusal only on that question", async () => {
+  const h = harness();
+  h.render().setSubmissionError("Code too large", true);
+  const pending = h.render().triggerRun();
+  await flush();
+  h.posts[0].resolve({ uid: "run-A" });
+  await flush();
+  assert.equal(h.render().submissionError, "Code too large");
+  h.render().switchQuestion(1);
+  h.render().setSubmissionError("Another question's error", true);
+  await h.tick();
+  h.polls[0].resolve({ id: "run-A", status: "AC" });
+  await pending;
+  assert.equal(h.render().submissionError, "Another question's error");
+  h.render().switchQuestion(0);
+  assert.equal(h.render().submissionError, null);
+});
+
+test("a Run result preserves newer errors and unresolved submission failures", async () => {
+  for (const replacement of [false, true]) {
+    const h = harness();
+    h.render().setSubmissionError("Submission response lost", replacement);
+    const pending = h.render().triggerRun();
+    await flush();
+    h.posts[0].resolve({ uid: "run-A" });
+    await flush();
+    if (replacement) h.render().setSubmissionError("Submission response lost", true);
+    await h.tick();
+    h.polls[0].resolve({ id: "run-A", status: "AC" });
+    await pending;
+    assert.equal(h.render().submissionError, "Submission response lost");
+  }
 });

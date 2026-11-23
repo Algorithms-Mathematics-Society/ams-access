@@ -418,11 +418,12 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
   return (
     <VStack gap={0} style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden" }}>
       <HStack
-        gap={8}
+        gap={2}
         align="center"
+        wrap="wrap"
         style={{
-          padding: "8px 12px",
-          borderBottom: "1px solid var(--color-border)",
+          padding: "var(--spacing-2) var(--spacing-3)",
+          borderBottom: "var(--border-width) solid var(--color-border)",
           flexShrink: 0,
         }}
       >
@@ -451,8 +452,7 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
           />
         ) : null}
         <BookOpen size={15} aria-hidden style={{ flexShrink: 0 }} />
-        {/* Book switches keep their width; only the page label gives way. */}
-        <HStack gap={4} align="center" style={{ flexShrink: 0 }}>
+        <HStack gap={2} align="center" wrap="wrap" style={{ minWidth: 0 }}>
           <Button
             type="button"
             label="C++"
@@ -485,13 +485,11 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
             />
           ) : null}
         </HStack>
-        {crumb ? (
-          <Text size="sm" maxLines={1} style={{ fontWeight: 600, minWidth: 0 }}>
-            {crumb}
-          </Text>
-        ) : null}
-
-        <HStack gap={6} align="center" style={{ marginLeft: "auto", minWidth: 0 }}>
+        <HStack
+          gap={2}
+          align="center"
+          style={{ marginLeft: "auto", flex: "1 1 20ch", minWidth: 0 }}
+        >
           <Search size={14} aria-hidden />
           <input
             ref={inputRef}
@@ -511,7 +509,8 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
             style={{
               font: "inherit",
               padding: "4px 8px",
-              minWidth: 280,
+              minWidth: 0,
+              flex: 1,
               border: "var(--border-width) solid var(--color-border)",
               borderRadius: "var(--radius-element)",
               background: "transparent",
@@ -534,6 +533,20 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
           ) : null}
         </HStack>
       </HStack>
+
+      {crumb && (
+        <Text
+          size="sm"
+          weight="semibold"
+          style={{
+            padding: "var(--spacing-2) var(--spacing-3)",
+            overflowWrap: "anywhere",
+            flexShrink: 0,
+          }}
+        >
+          {crumb}
+        </Text>
+      )}
 
       {blocked ? (
         <HStack
