@@ -4,8 +4,8 @@ export type SupportPollRuntime = {
   window: Pick<Window, "addEventListener" | "removeEventListener">;
   now: () => number;
   random: () => number;
-  setTimeout: typeof setTimeout;
-  clearTimeout: typeof clearTimeout;
+  setTimeout: Window["setTimeout"];
+  clearTimeout: Window["clearTimeout"];
 };
 export function startSupportPolling(
   task: (signal: AbortSignal) => Promise<unknown>,
@@ -15,8 +15,8 @@ export function startSupportPolling(
     window,
     now: Date.now,
     random: Math.random,
-    setTimeout,
-    clearTimeout,
+    setTimeout: (...args) => window.setTimeout(...args),
+    clearTimeout: (...args) => window.clearTimeout(...args),
   }
 ): () => void {
   const minimum = options.minimumMs ?? 8000;
@@ -26,7 +26,7 @@ export function startSupportPolling(
     halted = false,
     failures = 0,
     notBefore = 0;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timer: ReturnType<SupportPollRuntime["setTimeout"]> | undefined;
   let controller: AbortController | undefined;
   const clear = () => {
     if (timer !== undefined) runtime.clearTimeout(timer);
