@@ -140,10 +140,8 @@ export function draftBackup(
       };
 }
 
-/** A failure that ends backups for the session: no connection to the server
- * at all (which is also how a server refusing PUT under CORS looks), or a
- * session or contest that no longer accepts drafts. Anything else is retried
- * on the next tick. Either way nothing is shown: the device copy is primary. */
+/** A session or contest that no longer accepts drafts stops backups.
+ * Transient failures are retried on the next tick. The device copy is primary. */
 export function stopsDraftBackup(status: number): boolean {
-  return status === 0 || status === 409;
+  return status === 409;
 }
