@@ -588,20 +588,18 @@ const largeStandings = {
 };
 async function verifyBenchmarkPaging({ page }) {
   const pager = page.getByRole("navigation", { name: "Benchmark history pages" });
+  const next = pager.getByRole("button", { name: "Go to next page", exact: true });
   const rows = page.getByText(/^Revision \d+ · Measured$/, { exact: true });
   await pager.waitFor();
   assert.equal(await rows.count(), 25);
   assert.equal(await page.getByText("Revision 61 · Measured", { exact: true }).count(), 1);
-  await keyboardActivate(page, pager.getByRole("button", { name: "Go to next page", exact: true }));
+  await keyboardActivate(page, next);
   await page.getByText("Revision 36 · Measured", { exact: true }).waitFor();
   assert.equal(await rows.count(), 25);
-  await keyboardActivate(page, pager.getByRole("button", { name: "Go to next page", exact: true }));
+  await keyboardActivate(page, next);
   await page.getByText("Revision 11 · Measured", { exact: true }).waitFor();
   assert.equal(await rows.count(), 11);
-  assert.equal(
-    await pager.getByRole("button", { name: "Go to next page", exact: true }).isDisabled(),
-    true
-  );
+  await next.and(page.locator(":disabled, [aria-disabled=true]")).waitFor();
   await keyboardActivate(
     page,
     pager.getByRole("button", { name: "Go to previous page", exact: true })
@@ -612,19 +610,17 @@ async function verifyBenchmarkPaging({ page }) {
 }
 async function verifyLiveBoardPaging({ page }) {
   const pager = page.getByRole("navigation", { name: "Live team standings pages" });
+  const next = pager.getByRole("button", { name: "Go to next page", exact: true });
   const rows = page.getByText(/^\d+\. Pagination team \d+( · Your team)?$/, { exact: true });
   await pager.waitFor();
   assert.equal(await rows.count(), 50);
-  await keyboardActivate(page, pager.getByRole("button", { name: "Go to next page", exact: true }));
+  await keyboardActivate(page, next);
   await page.getByText("51. Pagination team 51", { exact: true }).waitFor();
   assert.equal(await rows.count(), 50);
   await keyboardActivate(page, page.getByRole("button", { name: "Show your team", exact: true }));
   await page.getByText("111. Pagination team 111 · Your team", { exact: true }).waitFor();
   assert.equal(await rows.count(), 21);
-  assert.equal(
-    await pager.getByRole("button", { name: "Go to next page", exact: true }).isDisabled(),
-    true
-  );
+  await next.and(page.locator(":disabled, [aria-disabled=true]")).waitFor();
   await keyboardActivate(
     page,
     pager.getByRole("button", { name: "Go to previous page", exact: true })

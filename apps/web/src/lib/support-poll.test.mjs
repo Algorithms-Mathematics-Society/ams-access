@@ -42,6 +42,38 @@ function fake(random = 0.5) {
     },
   };
 }
+test("the default browser runtime schedules and cancels a subsequent read", async (t) => {
+  const clock = fake();
+  const window = {
+    ...clock.runtime.window,
+    setTimeout: function (...args) {
+      assert.equal(this, window);
+      return clock.runtime.setTimeout(...args);
+    },
+    clearTimeout: function (...args) {
+      assert.equal(this, window);
+      clock.runtime.clearTimeout(...args);
+    },
+  };
+  t.mock.method(globalThis, "setTimeout", window.setTimeout);
+  t.mock.method(globalThis, "clearTimeout", window.clearTimeout);
+  Object.assign(globalThis, { window, document: clock.document });
+  t.after(() => {
+    delete globalThis.window;
+    delete globalThis.document;
+  });
+  let calls = 0;
+  const stop = startSupportPolling(async () => {
+    calls++;
+  });
+  await flush();
+  assert.equal(calls, 1);
+  clock.fire();
+  await flush();
+  assert.equal(calls, 2);
+  stop();
+  assert.equal(clock.timers.size, 0);
+});
 test("one in-flight read survives repeated focus events and stop aborts it", async () => {
   const clock = fake();
   let calls = 0,
