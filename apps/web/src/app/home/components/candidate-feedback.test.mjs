@@ -227,7 +227,15 @@ test("approval labels distinguish decisions and never fabricate times", () => {
   assert.ok(acceptedRequestTime("2026-10-24T10:00:00Z"));
 });
 
-function component(path) {
+test("setup describes manual status checks and names its approved action", () => {
+  assert.match(approvalMessage("pending"), /refreshes automatically/);
+  assert.match(approvalMessage("pending", null, "setup"), /Check approval status/);
+  assert.doesNotMatch(approvalMessage("pending", null, "setup"), /automatically/);
+  assert.match(approvalMessage("approved", null, "setup"), /Continue to setup/);
+  assert.match(approvalMessage("approved"), /Choose Resume/);
+});
+
+function component(path, bindings = {}) {
   const code = ts.transpileModule(readFileSync(new URL(path, import.meta.url), "utf8"), {
     compilerOptions: {
       target: ts.ScriptTarget.ES2022,
@@ -238,6 +246,7 @@ function component(path) {
   const exports = {};
   const jsx = (type, props) => ({ type, props });
   const require = (name) => {
+    if (Object.hasOwn(bindings, name)) return bindings[name];
     if (name === "react") return { memo: (fn) => fn, useState: (value) => [value, () => {}] };
     if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
     if (name === "./approval-feedback") return { approvalLabel, acceptedRequestTime };
@@ -251,6 +260,48 @@ function nodes(node) {
     ? []
     : [node, ...[node.props?.children].flat(Infinity).flatMap(nodes)];
 }
+
+test("a finished graded contest opens submissions, while a finished practice contest can reopen", () => {
+  const paths = [];
+  const entries = [];
+  const { ActiveContestCard } = component("./ContestCards.tsx", {
+    react: {
+      memo: (fn) => fn,
+      useState: (value) => [typeof value === "function" ? value() : value, () => {}],
+      useMemo: (compute) => compute(),
+      useRef: (value) => ({ current: value }),
+      useEffect() {},
+    },
+    "next/navigation": { useRouter: () => ({ push: (path) => paths.push(path) }) },
+    "@/lib/proctor-api": { serverNow: () => 0 },
+    "@/lib/date-time-format": { dateTimeFormatter: () => ({ format: () => "1 June" }) },
+    "./utils": {
+      getContestEntryState: () => ({
+        phase: "live",
+        canEnter: true,
+        ctaLabel: "Enter Contest",
+        statusLabel: "LIVE",
+        sessionType: "resume",
+      }),
+      formatDurationUntil: () => "1 hour",
+    },
+  });
+  for (const is_practice of [false, true]) {
+    const rendered = nodes(
+      ActiveContestCard({
+        c: { id: "live", title: "Algorithms", session_finished: true, is_practice },
+        onPreflight: async (id) => entries.push(id),
+      })
+    );
+    const action = rendered.find((node) => node.type === "Button");
+    assert.equal(action.props.label, is_practice ? "Enter Contest" : "View my submissions");
+    assert.equal(action.props.isDisabled, false);
+    assert.ok(rendered.some((node) => node.props?.label === (is_practice ? "LIVE" : "Finished")));
+    action.props.onClick();
+  }
+  assert.deepEqual(paths, ["/results?contestId=live"]);
+  assert.deepEqual(entries, ["live"]);
+});
 test("readiness rows expose actual outcome visibly, not only in aria labels", () => {
   const { ReadinessItem } = component("./ReadinessPanel.tsx");
   for (const [status, label] of [

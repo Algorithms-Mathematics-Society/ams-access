@@ -1131,6 +1131,7 @@ export function noteListServerTime(items: readonly object[]): boolean {
  * which means the same thing to the caller. */
 export async function getMyContestSession(contestUid: string): Promise<{
   uid: string;
+  contest_uid: string;
   status: SessionStatus;
   started_at: string | null;
   ended_at: string | null;

@@ -3,6 +3,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { AUTH_RECHECK_MS, onUnauthorized } from "./auth-loss.ts";
+import {
+  connectionLevel,
+  initialHeartbeatState,
+  onFailure,
+  onSuccess,
+} from "../../../lib/heartbeat-policy.ts";
 
 const source = readFileSync(new URL("./client.tsx", import.meta.url), "utf8");
 const ast = ts.createSourceFile(
@@ -14,6 +20,7 @@ const ast = ts.createSourceFile(
 );
 let heartbeatEffect;
 let heartbeatDependencies;
+let footerOnlineExpression;
 function visit(node) {
   if (
     ts.isCallExpression(node) &&
@@ -23,6 +30,12 @@ function visit(node) {
     heartbeatEffect = node.arguments[0];
     heartbeatDependencies = node.arguments[1]?.getText(ast);
   }
+  if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(ast) === "FooterTrustStrip") {
+    const prop = node.attributes.properties.find(
+      (attribute) => ts.isJsxAttribute(attribute) && attribute.name.getText(ast) === "online"
+    );
+    footerOnlineExpression = prop?.initializer?.expression?.getText(ast);
+  }
   ts.forEachChild(node, visit);
 }
 visit(ast);
@@ -31,6 +44,18 @@ assert.match(heartbeatDependencies, /\bcontestId\b/, "contest change must cancel
 const effectJs = ts.transpileModule(`const effect = ${heartbeatEffect.getText(ast)};`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
+
+test("a failed heartbeat marks the footer reconnecting before the offline grace threshold", () => {
+  assert.ok(footerOnlineExpression);
+  const online = new Function("browserOnline", "connection", `return ${footerOnlineExpression};`);
+  const initial = initialHeartbeatState();
+  const degraded = onFailure(initial);
+  assert.equal(connectionLevel(degraded), "degraded");
+  assert.equal(online(true, connectionLevel(initial)), true);
+  assert.equal(online(true, connectionLevel(degraded)), false);
+  assert.equal(online(true, connectionLevel(onSuccess(degraded, 1000))), true);
+  assert.equal(online(false, connectionLevel(initial)), false);
+});
 
 function harness(random = 0.5) {
   const requests = [];

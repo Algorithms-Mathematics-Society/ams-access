@@ -79,7 +79,7 @@ import {
   type PresenceStatus,
   type PresenceDetector,
 } from "@/lib/presence-monitor";
-import { STORAGE_KEYS } from "@/constants/storage-keys";
+import { STORAGE_KEYS, finishedContestKey } from "@/constants/storage-keys";
 import {
   CONTEST_EDITOR_THEMES,
   resolveLanguageBundle,
@@ -213,6 +213,7 @@ import {
 import {
   ProctorApiError,
   authGeneration,
+  currentParticipantUid,
   subscribeAuthChanges,
   acknowledgeAnnouncement,
   getPublishedReferenceSheet,
@@ -2830,10 +2831,17 @@ export default function ContestPageClient() {
     try {
       // Remember which session this was before dropping it. The results
       // screen opens after this runs and has nothing else to go on.
-      if (!preserveSession && readStoredSession()?.id === sessionId) {
+      const stored = readStoredSession();
+      if (!preserveSession && stored && stored.id === sessionId) {
         const finished = localStorage.getItem(ACTIVE_SESSION_KEY);
         if (finished) localStorage.setItem(STORAGE_KEYS.LAST_SESSION, finished);
         localStorage.removeItem(ACTIVE_SESSION_KEY);
+        const participant = currentParticipantUid();
+        if (participant)
+          localStorage.setItem(
+            finishedContestKey(participant, stored.contest_id),
+            JSON.stringify({ id: stored.id, confirmed_at: Date.now() })
+          );
       }
     } catch {
       // ignore storage errors
@@ -3002,8 +3010,9 @@ export default function ContestPageClient() {
                 10000,
                 "Finish response timed out"
               );
-            } finally {
+            } catch (error) {
               controller.abort();
+              throw error;
             }
           },
           wait: (attempt) =>
@@ -5687,7 +5696,7 @@ export default function ContestPageClient() {
             proctoringOk={proctoringOk}
             footerStatusDot={footerStatusDot}
             cameraStatus={footerCameraStatus(cameraEnabled, cameraHealthy, cameraError)}
-            online={online}
+            online={browserOnline && connection === "online"}
             saveIndicator={saveIndicator}
             draftStatusLabel={activeDraftStatus.label}
             draftConfirmed={activeDraftStatus.confirmed}
