@@ -32,7 +32,7 @@ export function voiceErrorAdvice(error: string | null): string | null {
     case "Team voice is not available to you.":
       return "Your account cannot join team voice for this round. Ask a proctor for help.";
     case "A teammate audio connection failed.":
-      return "A teammate’s audio connection was interrupted.";
+      return "A teammate’s audio connection could not be restored. Leave and join voice again to retry.";
     case "Voice relay credentials could not be renewed.":
     case "Voice relay credentials expired.":
     case "Team voice relay is unavailable.":

@@ -1,5 +1,18 @@
 import type { VoiceTeam } from "./team-voice-api";
-import type { TeamVoiceSnapshot } from "./team-voice-engine";
+import type { TeamVoicePeer, TeamVoiceSnapshot } from "./team-voice-engine";
+
+export function voicePeerStatus(peer: TeamVoicePeer): string {
+  switch (peer.link) {
+    case "connecting":
+      return "connecting…";
+    case "reconnecting":
+      return "reconnecting…";
+    case "unavailable":
+      return "audio connection unavailable";
+    default:
+      return peer.muted ? "muted" : peer.speaking ? "speaking" : "in voice";
+  }
+}
 
 /** Only stable roster IDs establish presence; names may be identical. */
 export function voiceMemberRows<Member extends VoiceTeam["members"][number]>(
@@ -27,11 +40,12 @@ export function voiceMemberRows<Member extends VoiceTeam["members"][number]>(
               : "join voice to see"
           : !peer
             ? "not in voice"
-            : peer.muted
-              ? "muted"
-              : peer.speaking
-                ? "speaking"
-                : "in voice";
-    return { key: member.member_uid ?? `legacy-${index}`, member, peer, status };
+            : voicePeerStatus(peer);
+    return {
+      key: member.member_uid ?? `legacy-${index}`,
+      member,
+      peer: peer?.link === "unavailable" ? undefined : peer,
+      status,
+    };
   });
 }

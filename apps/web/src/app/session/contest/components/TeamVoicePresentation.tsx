@@ -6,6 +6,7 @@ import { Popover } from "@astryxdesign/core/Popover";
 import { HStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import type { TeamVoiceSnapshot } from "@/lib/team-voice-engine";
+import { voicePeerStatus } from "@/lib/team-voice-members";
 import { acquireOrdinaryEscape } from "../escape-ownership";
 
 function hasVisiblePriorityDialog() {
@@ -80,7 +81,9 @@ export function TeamVoicePresentation({
   if (!toolbarTarget) return null;
   const connected = snapshot?.status === "connected" || snapshot?.status === "reconnecting";
   const busy = snapshot?.status === "connecting";
-  const reconnecting = snapshot?.status === "reconnecting";
+  const reconnecting =
+    snapshot?.status === "reconnecting" ||
+    snapshot?.peers.some((peer) => peer.link === "reconnecting");
   const attention = Boolean(notice || snapshot?.error);
   const settingsLabel = reconnecting ? "Reconnecting…" : attention ? "Audio issue" : "Voice";
   return createPortal(
@@ -117,7 +120,7 @@ export function TeamVoicePresentation({
         <Text
           key={peer.memberUid}
           role="img"
-          aria-label={`${peer.displayName}: ${peer.speaking && !peer.muted ? "speaking" : peer.muted ? "muted" : "in voice"}`}
+          aria-label={`${peer.displayName}: ${voicePeerStatus(peer)}`}
           style={{
             color:
               peer.speaking && !peer.muted
