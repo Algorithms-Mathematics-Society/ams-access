@@ -11,10 +11,11 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const script = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).scripts.test;
 const listed = script.match(/[\w./-]+\.test\.mjs/g) ?? [];
 
-/** Dependencies, hidden directories and the root export never hold suite files.
- * Symlinks are not followed. */
+/** Skip dependencies and generated build assets. Symlinks are not followed. */
 const skipped = (dir, name) =>
-  name === "node_modules" || name.startsWith(".") || (dir === root && name === "out");
+  name === "node_modules" ||
+  name.startsWith(".") ||
+  (dir === root && (name === "out" || name === "public"));
 
 function testFiles(dir) {
   const found = [];
@@ -45,7 +46,7 @@ test("every listed test file exists", () => {
   assert.deepEqual(missing, [], "listed in package.json scripts.test but not on disk");
 });
 
-test("every test file on disk is in the test script", () => {
+test("every source test file is in the test script", () => {
   const inScript = new Set(listed);
   const unlisted = testFiles(root)
     .filter((file) => !inScript.has(file))

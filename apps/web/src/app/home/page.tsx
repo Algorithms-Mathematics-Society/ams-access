@@ -125,14 +125,17 @@ export default function HomePage() {
   const router = useRouter();
   const { theme } = useTheme(); // canonical single source
   const [activeNav, setActiveNav] = useState<"overview" | "settings" | "diagnostics">("overview");
+  const [sessionMoved, setSessionMoved] = useState(false);
   // A contest that ended with device settings still changed sends the
   // candidate here with ?restore=pending: open Settings, where the restore
   // card lists each setting and its fix. Read after mount, not in the state
   // initialiser, so the static prerender and the first client render agree.
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("restore") === "pending") {
+    const query = new URLSearchParams(window.location.search);
+    if (query.get("restore") === "pending") {
       setActiveNav("settings");
     }
+    setSessionMoved(query.get("handoff") === "complete");
   }, []);
   // Backstop for any screen that reaches Home without releasing the lockdown.
   // No contest runs while Home is showing, so an engaged lockdown here is
@@ -829,6 +832,11 @@ export default function HomePage() {
         live = await getSession(session.id);
       } catch (error) {
         if (isStale()) return null;
+        if (error instanceof ProctorApiError && error.code === "SESSION_DEVICE_MISMATCH") {
+          clearStoredActiveSession(error.message);
+          setSessionMoved(true);
+          return null;
+        }
         // Only an authoritative not-found response invalidates recovery. A
         // timeout, outage or expired sign-in says nothing about this session.
         if (error instanceof ProctorApiError && error.status === 404) {
@@ -1224,6 +1232,13 @@ export default function HomePage() {
               />
             }
           >
+            {sessionMoved && (
+              <Banner
+                status="warning"
+                title="Your exam continued on another device"
+                description="Use the device approved by your organizer to continue."
+              />
+            )}
             {(unsupportedTeamDevice || teamEntryMessage) && (
               <Banner
                 status="warning"

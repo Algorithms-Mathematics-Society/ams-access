@@ -109,7 +109,7 @@ test("a failed download waits for the output file to close before rejecting", as
 });
 
 test("a failed bundle promotion restores the previous bundle", () => {
-  const root = mkdtempSync(join(process.cwd(), "cppref-publish-"));
+  const root = mkdtempSync(join(tmpdir(), "cppref-publish-"));
   const staging = join(root, "staging"),
     destination = join(root, "bundle");
   mkdirSync(staging);

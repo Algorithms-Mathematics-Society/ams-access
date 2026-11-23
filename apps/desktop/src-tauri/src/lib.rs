@@ -464,6 +464,7 @@ struct EventSyncConfig {
     /// machine the candidate controls and anything shipped inside it is
     /// theirs.
     token: String,
+    device_id: Option<reqwest::header::HeaderValue>,
     // Each configuration owns one revocable lease, including token refreshes
     // for the same binding. Stale requests cannot acknowledge a newer lease.
     lease: Arc<tokio::sync::watch::Sender<bool>>,
@@ -491,6 +492,7 @@ async fn configure_event_stream(
     api_url: String,
     session_id: Option<String>,
     token: Option<String>,
+    device_id: Option<String>,
     preserve_binding: Option<bool>,
 ) -> Result<(), String> {
     event_recorder()?
@@ -499,6 +501,7 @@ async fn configure_event_stream(
                 api_url,
                 session_id,
                 token,
+                device_id,
                 preserve_binding.unwrap_or(false),
             );
             Ok(())
@@ -509,6 +512,7 @@ fn configure_event_stream_now(
     api_url: String,
     session_id: Option<String>,
     token: Option<String>,
+    device_id: Option<String>,
     preserve_binding: bool,
 ) {
     let _scope = EVENT_RECORD_LOCK
@@ -529,6 +533,11 @@ fn configure_event_stream_now(
                     api_url: api_url.trim().trim_end_matches('/').into(),
                     session_id: session.trim().into(),
                     token: token.trim().into(),
+                    device_id: device_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .and_then(|value| reqwest::header::HeaderValue::from_str(value).ok()),
                     lease: Arc::new(tokio::sync::watch::channel(false).0),
                 })
         });
@@ -618,6 +627,24 @@ fn upload_verdict(status: u16) -> UploadVerdict {
         408 | 429 => UploadVerdict::Retry,
         400..=499 => UploadVerdict::Refused(status),
         _ => UploadVerdict::Retry,
+    }
+}
+
+fn event_upload_request(
+    client: &reqwest::Client,
+    config: &EventSyncConfig,
+) -> reqwest::RequestBuilder {
+    let url = format!(
+        "{}/participant/sessions/{}/events",
+        config.api_url, config.session_id
+    );
+    let request = client
+        .post(url)
+        .bearer_auth(&config.token)
+        .header(reqwest::header::CONTENT_TYPE, "application/json");
+    match &config.device_id {
+        Some(device_id) => request.header("X-Device-Id", device_id.clone()),
+        None => request,
     }
 }
 
@@ -712,21 +739,12 @@ fn spawn_event_sync_task(app: tauri::AppHandle) {
                     .quarantine_notices += 1;
                 note_event_error("audit evidence quarantined / explicit gap", notice);
             }
-            // Existing destination, bearer authentication, TLS and event JSON
-            // are unchanged. Both endpoint and batch retain the same binding.
-            let url = format!(
-                "{}/participant/sessions/{}/events",
-                config.api_url, config.session_id
-            );
             let verdict = if batch.events.is_empty() {
                 // Only preserved quarantine bytes moved the cursor; no server
                 // event is falsely acknowledged and no empty POST is needed.
                 UploadVerdict::Delivered
             } else {
-                let request = client
-                    .post(&url)
-                    .bearer_auth(&config.token)
-                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                let request = event_upload_request(&client, &config)
                     .body(std::mem::take(&mut batch.body))
                     .send();
                 match while_event_lease_active(&config, request).await {
@@ -4362,9 +4380,15 @@ mod event_integration_tests {
             "https://first.invalid".into(),
             Some("one".into()),
             Some("token-one".into()),
+            Some("device-one".into()),
             false,
         );
         let first = event_sync_config().lock().unwrap().clone().unwrap();
+        let request = event_upload_request(&reqwest::Client::new(), &first)
+            .build()
+            .unwrap();
+        assert_eq!(request.headers()["X-Device-Id"], "device-one");
+        assert_eq!(request.url().path(), "/participant/sessions/one/events");
         let root = std::env::temp_dir().join(format!(
             "ams-config-switch-{}-{}",
             std::process::id(),
@@ -4386,6 +4410,7 @@ mod event_integration_tests {
             "https://second.invalid".into(),
             Some("two".into()),
             Some("token-two".into()),
+            None,
             false,
         );
         let second = event_sync_config().lock().unwrap().clone().unwrap();
@@ -4435,7 +4460,7 @@ mod event_integration_tests {
                 ))
                 .await
             );
-            configure_event_stream_now(String::new(), None, None, true);
+            configure_event_stream_now(String::new(), None, None, None, true);
             assert!(event_sync_config().lock().unwrap().is_none());
             assert_eq!(
                 event_record_binding().lock().unwrap().as_ref(),
@@ -4455,6 +4480,7 @@ mod event_integration_tests {
             "https://first.invalid".into(),
             Some("one".into()),
             Some("fresh-token".into()),
+            Some("device-one".into()),
             false,
         );
         let fresh = event_sync_config().lock().unwrap().clone().unwrap();
@@ -4466,7 +4492,7 @@ mod event_integration_tests {
             .unwrap()
             .is_none());
         // Explicit sign-out clears both recording scope and credentials.
-        configure_event_stream_now(String::new(), None, None, false);
+        configure_event_stream_now(String::new(), None, None, None, false);
         assert!(event_sync_config().lock().unwrap().is_none());
         assert!(event_record_binding().lock().unwrap().is_none());
         assert!(!acknowledge_current_event_batch(&store, &fresh, &batch).unwrap());

@@ -167,6 +167,14 @@ function storage(): Storage | null {
   }
 }
 
+export function storedDeviceId(): string | null {
+  try {
+    return storage()?.getItem(STORAGE_KEYS.DEVICE_ID) || null;
+  } catch {
+    return null;
+  }
+}
+
 let authenticationGeneration = 0;
 const authChangeListeners = new Set<() => void>();
 export const authGeneration = () => authenticationGeneration;
@@ -326,6 +334,10 @@ async function request<T>(
   // it directly would send this request unauthenticated.
   const bearer = currentToken();
   if (bearer) headers.Authorization = `Bearer ${bearer}`;
+  if (bearer && path.startsWith("/participant/sessions/")) {
+    const deviceId = storedDeviceId();
+    if (deviceId) headers["X-Device-Id"] = deviceId;
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

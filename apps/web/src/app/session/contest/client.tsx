@@ -230,6 +230,7 @@ import {
   serverNow,
   newIdempotencyKey,
   submit as submitSolution,
+  storedDeviceId,
   uploadIdentityPhoto,
 } from "@/lib/proctor-api";
 import { Info, ShieldCheck, Shield, Wifi, WifiOff, Save } from "lucide-react";
@@ -253,6 +254,7 @@ const SUPPORT_CATEGORIES = [
 
 const API_URL = resolveApiBase();
 const ACTIVE_SESSION_KEY = STORAGE_KEYS.ACTIVE_SESSION;
+const MOVED_SESSION_HOME = "/home?handoff=complete";
 const EDITOR_THEME_KEY = "ams_contest_editor_theme";
 const PROBLEM_SPLIT_WIDTH_KEY = "ams_contest_problem_split_width";
 const DEFAULT_EDITOR_THEME: ContestEditorThemeId = "ams-terminal";
@@ -1902,6 +1904,10 @@ export default function ContestPageClient() {
     })().catch((error) => {
       if (!isCurrentLoad() || (error instanceof DOMException && error.name === "AbortError"))
         return;
+      if (error instanceof ProctorApiError && error.code === "SESSION_DEVICE_MISMATCH") {
+        void leaveMovedSession(stored.id);
+        return;
+      }
       if (error instanceof ProctorApiError && error.status === 401) {
         const step = onUnauthorized(unauthorizedAtRef.current, Date.now());
         unauthorizedAtRef.current = step.firstAt;
@@ -2854,6 +2860,15 @@ export default function ContestPageClient() {
     setLeaveConfirm(true);
   }
 
+  function leaveMovedSession(movedSessionId: string) {
+    try {
+      if (readStoredSession()?.id === movedSessionId) localStorage.removeItem(ACTIVE_SESSION_KEY);
+    } catch {
+      // Native controls must still release when local recovery storage is unavailable.
+    }
+    return redirectAfterRelease(MOVED_SESSION_HOME, true);
+  }
+
   async function redirectAfterRelease(destination: string, allowPendingFinish = false) {
     if (
       redirectInFlightRef.current ||
@@ -2889,7 +2904,10 @@ export default function ContestPageClient() {
       }
       // Start local restoration before credential cleanup. A stalled event
       // stream must not delay restoring fullscreen, input or network controls.
-      const releaseWork = runExitTeardown(true, exitPhoto);
+      const releaseWork = runExitTeardown(
+        true,
+        destination === MOVED_SESSION_HOME ? Promise.resolve() : exitPhoto
+      );
       const revokeWork = (async () => {
         try {
           if (window.__TAURI__) {
@@ -3387,6 +3405,7 @@ export default function ContestPageClient() {
      * the failures.
      */
     const beat = async () => {
+      if (cancelled || authExpired) return;
       const request = ++latestRequest;
       try {
         const live = await heartbeat(sessionId);
@@ -3462,6 +3481,12 @@ export default function ContestPageClient() {
         }
       } catch (caught) {
         if (cancelled || authExpired) return;
+        if (caught instanceof ProctorApiError && caught.code === "SESSION_DEVICE_MISMATCH") {
+          if (request <= acceptedSuccess) return;
+          authExpired = true;
+          void leaveMovedSession(sessionId);
+          return;
+        }
         if (caught instanceof ProctorApiError && caught.status === 401) {
           // A newer transport failure cannot invalidate an earlier auth rejection.
           // A newer accepted server reply can: it proved the session is still valid.
@@ -3663,7 +3688,12 @@ export default function ContestPageClient() {
   useEffect(() => {
     if (!sessionId || redirectInFlightRef.current || pendingRedirect) return;
     void window.__TAURI__?.core
-      .invoke("configure_event_stream", { apiUrl: API_URL, sessionId, token: participantToken() })
+      .invoke("configure_event_stream", {
+        apiUrl: API_URL,
+        sessionId,
+        token: participantToken(),
+        deviceId: storedDeviceId(),
+      })
       .catch(() => {});
   }, [sessionId]);
 

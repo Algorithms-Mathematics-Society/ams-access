@@ -967,6 +967,7 @@ export default function OnboardingPage() {
               apiUrl: API_URL,
               sessionId: preparedSessionIdRef.current,
               token: participantToken(),
+              deviceId: getOrCreateDeviceId(),
             }),
           5000,
           "event recorder setup timed out"
@@ -991,6 +992,7 @@ export default function OnboardingPage() {
                   apiUrl: API_URL,
                   sessionId: preparedSessionIdRef.current,
                   token,
+                  deviceId: getOrCreateDeviceId(),
                 });
                 await bridge.core.invoke(
                   "log_proctoring_event",
@@ -1019,6 +1021,7 @@ export default function OnboardingPage() {
                   apiUrl: API_URL,
                   sessionId: preparedSessionIdRef.current,
                   token: participantToken(),
+                  deviceId: getOrCreateDeviceId(),
                 });
                 await window.__TAURI__!.core.invoke("log_proctoring_event", {
                   kind: "onboarding_policy_warning",
