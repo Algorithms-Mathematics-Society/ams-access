@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MAX_QUESTION_WORDS, askErrorMessage, countWords } from "./docs-assistant.ts";
+import {
+  MAX_QUESTION_WORDS,
+  askErrorMessage,
+  countWords,
+  mergeDocsMessages,
+} from "./docs-assistant.ts";
 
 test("words are counted the way the server counts them", () => {
   assert.equal(countWords(""), 0);
@@ -22,4 +27,26 @@ test("errors explain the limit, outage and rejected questions", () => {
     "Value error, questions are limited to 200 words"
   );
   assert.match(askErrorMessage({ status: 0 }), /connection/);
+});
+
+const older = { exchange_uid: "older", asked_at: "server-older" };
+const fresh = { exchange_uid: "fresh", asked_at: "client-fresh" };
+const savedFresh = { ...fresh, asked_at: "server-fresh" };
+
+test("late history cannot remove an answer already shown by Send", () => {
+  const shown = mergeDocsMessages([], [fresh]);
+  assert.deepEqual(mergeDocsMessages([older], shown), [older, fresh]);
+});
+
+test("a response to Send appends after earlier history", () => {
+  const shown = mergeDocsMessages([older], []);
+  assert.deepEqual(mergeDocsMessages(shown, [fresh]), [older, fresh]);
+});
+
+test("overlapping history and Send responses keep one canonical row in either order", () => {
+  const history = [older, savedFresh];
+  const afterSendFirst = mergeDocsMessages(history, mergeDocsMessages([], [fresh]));
+  const afterHistoryFirst = mergeDocsMessages(mergeDocsMessages(history, []), [fresh]);
+  assert.deepEqual(afterSendFirst, history);
+  assert.deepEqual(afterHistoryFirst, history);
 });

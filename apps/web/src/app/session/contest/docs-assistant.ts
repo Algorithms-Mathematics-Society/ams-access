@@ -24,3 +24,17 @@ export function askErrorMessage(error: {
     return error.message || "That question was not accepted.";
   return "The question could not be sent. Check your connection and try again.";
 }
+
+/** Keep the preferred rows in order, then append only unseen exchanges. */
+export function mergeDocsMessages<T extends { exchange_uid: string }>(
+  preferred: readonly T[],
+  additional: readonly T[]
+): T[] {
+  const byId = new Map<string, T>();
+  for (const rows of [preferred, additional]) {
+    for (const row of rows) {
+      if (!byId.has(row.exchange_uid)) byId.set(row.exchange_uid, row);
+    }
+  }
+  return [...byId.values()];
+}
