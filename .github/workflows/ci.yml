@@ -585,6 +585,12 @@ jobs:
         run: |
           set -eux
           docker run --rm -v "$PWD/deb:/deb:ro" -v "$PWD/scripts:/checks:ro" ubuntu:22.04 bash -eux -c '
+            # The stock image points at archive.ubuntu.com, which runners
+            # sometimes cannot reach (8 min apt-get update, then a cancelled
+            # job). Use the Azure mirror the runner images themselves use,
+            # and retry instead of hanging on one stalled download.
+            sed -i -E "s#http://(archive|security)\.ubuntu\.com/ubuntu#http://azure.archive.ubuntu.com/ubuntu#g" /etc/apt/sources.list
+            printf "Acquire::Retries \"5\";\nAcquire::http::Timeout \"30\";\n" > /etc/apt/apt.conf.d/80-ci-network
             apt-get update
             # The clean-image install. Recommends off, so the depends array is
             # proven rather than accidentally satisfied.
