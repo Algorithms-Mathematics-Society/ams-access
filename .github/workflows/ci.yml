@@ -72,11 +72,16 @@ jobs:
 
       - name: Install Linux system deps
         if: matrix.platform == 'ubuntu-22.04'
+        # Both public Ubuntu mirrors have stalled these jobs on different
+        # days; scripts/ci-apt-update.sh alternates between them.
         timeout-minutes: 20
         run: |
+          set -eu
+          # Alternates archive.ubuntu.com and the Azure mirror; see the script.
+          sudo sh scripts/ci-apt-update.sh
           # Jammy runner LLVM headers conflict with GStreamer libunwind-dev.
           # Replace libunwind-14-dev in the same apt transaction (trailing -).
-          bash scripts/install-jammy-ci-deps.sh \
+          sudo timeout 900 apt-get install -y --no-install-recommends \
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             librsvg2-dev \
@@ -169,9 +174,6 @@ jobs:
 
       - name: TURN DNS gate regression tests
         run: node --test scripts/check-turn-dns.test.mjs
-
-      - name: Jammy package mirror regression tests
-        run: bash scripts/install-jammy-ci-deps.test.sh
 
       - name: Versions agree
         run: pnpm check:versions
@@ -337,11 +339,16 @@ jobs:
 
       - name: Install Linux system deps
         if: matrix.platform == 'ubuntu-22.04'
+        # Both public Ubuntu mirrors have stalled these jobs on different
+        # days; scripts/ci-apt-update.sh alternates between them.
         timeout-minutes: 20
         run: |
+          set -eu
+          # Alternates archive.ubuntu.com and the Azure mirror; see the script.
+          sudo sh scripts/ci-apt-update.sh
           # Jammy runner LLVM headers conflict with GStreamer libunwind-dev.
           # Replace libunwind-14-dev in the same apt transaction (trailing -).
-          bash scripts/install-jammy-ci-deps.sh \
+          sudo timeout 900 apt-get install -y --no-install-recommends \
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
             librsvg2-dev \
@@ -525,7 +532,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-22.04
     name: Deb install smoke
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Download the built package
@@ -537,18 +544,15 @@ jobs:
       - name: Install, verify, remove — on a clean image
         run: |
           set -eux
-          docker run --rm -v "$PWD/deb:/deb:ro" -v "$PWD/scripts:/checks:ro" \
-            -v /etc/ssl/certs/ca-certificates.crt:/run/runner-ca-certificates.crt:ro \
-            ubuntu:22.04 bash -eux -c '
-            # Seed TLS trust in the bare image. The ca-certificates package can update the copy.
-            mkdir -p /etc/ssl/certs
-            cp /run/runner-ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+          docker run --rm -v "$PWD/deb:/deb:ro" -v "$PWD/scripts:/checks:ro" ubuntu:22.04 bash -eux -c '
+            # Either public mirror can stall; the script alternates them.
+            APT_UPDATE_TIMEOUT=120 sh /checks/ci-apt-update.sh
             # The clean-image install. Recommends off, so the depends array is
             # proven rather than accidentally satisfied.
             # A pre-existing daemon must not satisfy the pkexec requirement.
-            bash /checks/install-jammy-ci-deps.sh polkitd
+            apt-get install -y --no-install-recommends polkitd
             ! command -v pkexec
-            bash /checks/install-jammy-ci-deps.sh /deb/*.deb
+            apt-get install -y --no-install-recommends /deb/*.deb
 
             dpkg -l | grep -q ams-access
             test -x /usr/bin/ams-access
@@ -563,7 +567,7 @@ jobs:
 
             test "$(stat -c %a /etc/udev/rules.d/70-ams-access-camera.rules)" = 644
             dpkg-query -W gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-nice gstreamer1.0-pulseaudio
-            bash /checks/install-jammy-ci-deps.sh gstreamer1.0-tools
+            apt-get install -y --no-install-recommends gstreamer1.0-tools
             sh /checks/check-linux-rtc-media.sh
             gst-inspect-1.0 pulsesrc >/dev/null
             gst-inspect-1.0 pulsesink >/dev/null

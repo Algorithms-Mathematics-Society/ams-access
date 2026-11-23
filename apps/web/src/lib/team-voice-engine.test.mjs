@@ -542,7 +542,7 @@ test("native reconnect creates a new helper session and restores explicit mute c
   h.session.setMuted(false);
   await h.flush();
   h.sockets[0].onclose({ code: 1006 });
-  await h.tick(800);
+  await h.tick(2000);
   assert.deepEqual(starts, ["native-1", "native-2"]);
   assert.ok(
     calls.some((call) => call.op === "mute" && call.session === "native-2" && call.muted === false)
@@ -628,7 +628,8 @@ test("finite reconnect budget and jittered bounded delays", async () => {
   await h.welcome();
   for (let i = 0; i < 6; i++) {
     h.sockets.at(-1).onclose({ code: 1006 });
-    await h.tick(Math.min(30000, 1000 * 2 ** i) * 0.8);
+    // random() is 0 in the harness, so each retry waits exactly the 2 s floor.
+    await h.tick(2000);
     h.message({ type: "welcome", me: "a", peers: [], ...turn });
     await h.flush();
   }
@@ -733,7 +734,8 @@ test("heartbeat every25 seconds and missing pong causes finite reconnect", async
   assert.ok(h.sockets[0].sent.some((m) => m.type === "ping"));
   await h.tick(19000);
   assert.equal(h.sockets.length, 1);
-  await h.tick(2000);
+  // The missed pong closes by 45.2 s; the reconnect follows after the 2 s floor.
+  await h.tick(3200);
   assert.equal(h.sockets.length, 2);
   h.session.stop();
 });

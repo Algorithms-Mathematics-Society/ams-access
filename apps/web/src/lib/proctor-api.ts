@@ -17,6 +17,7 @@ import { clearSetupAttempt } from "../app/session/onboarding/setup-authorization
  */
 
 import { resolveApiBase } from "./api-base.ts";
+import { retryAfterSeconds } from "./retry-jitter.ts";
 import { STORAGE_KEYS } from "../constants/storage-keys.ts";
 import type { LockdownConfig } from "@ams/api-client";
 
@@ -47,20 +48,6 @@ const DEFAULT_TIMEOUT_MS = 20_000;
  * made honest in the UI rather than hidden: see the boot screen's phases.
  */
 const ENTRY_TIMEOUT_MS = 75_000;
-
-function retryAfterSeconds(headers: Headers): number {
-  const value = headers.get("Retry-After")?.trim();
-  if (!value) return 0;
-  if (/^\d+$/.test(value)) {
-    const seconds = Number(value);
-    return Number.isSafeInteger(seconds) ? seconds : 0;
-  }
-  if (/^[+-]?\d+(?:\.\d+)?$/.test(value)) return 0;
-  const deadline = Date.parse(value);
-  const serverDate = Date.parse(headers.get("Date") ?? "");
-  if (!Number.isFinite(deadline) || !Number.isFinite(serverDate)) return 0;
-  return Math.max(0, Math.ceil((deadline - serverDate) / 1000));
-}
 
 export class ProctorApiError extends Error {
   // Declared and assigned rather than written as constructor parameter
