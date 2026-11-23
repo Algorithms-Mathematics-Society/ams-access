@@ -465,7 +465,7 @@ async function parseCXXProbeQuestion(
     question_type: common.type as string,
     points: common.points as number,
     judge_engine: "cxxprobe",
-    time_limit_ms: limits.wall_time_ms,
+    time_limit_ms: limits.cpu_time_ms,
     memory_limit_mb: Math.ceil(limits.memory_bytes / (1024 * 1024)),
     cxxprobe: {
       bundle_sha256: bundleSHA256,

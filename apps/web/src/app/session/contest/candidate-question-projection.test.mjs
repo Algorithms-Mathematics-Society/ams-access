@@ -161,6 +161,8 @@ test("loads exact mixed legacy/cxxprobe projection and authenticated verified as
 
   assert.equal(loaded.questions.length, 2);
   assert.equal(loaded.questions[0].judge_engine, "cxxprobe");
+  assert.equal(loaded.questions[0].time_limit_ms, 2000);
+  assert.equal(loaded.questions[0].cxxprobe.limits.wall_time_ms, 4000);
   assert.equal(loaded.questions[0].starter_filename, "main.cpp");
   assert.equal(loaded.questions[0].starter_code, payload.questions[0].cxxprobe.starter.content);
   assert.equal(loaded.questions[0].cxxprobe.standard, "c++23");
