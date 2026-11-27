@@ -25,6 +25,7 @@ apps/desktop/src-tauri/WixTools/
 # Keep the tracked .service/.policy/.plist + placeholder; do not commit the compiled ELF.
 apps/desktop/src-tauri/helpers/ams-access-networkhelper
 apps/desktop/src-tauri/helpers/ams-linux-voice-worker
+apps/desktop/src-tauri/helpers/appimage/
 
 # sccache
 .sccache/
