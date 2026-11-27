@@ -463,7 +463,9 @@ export const ReferencePanel = memo(function ReferencePanel({ onClose }: { onClos
           {boostReady ? (
             <Button
               type="button"
-              label="Boost"
+              // The pack carries nlohmann/json as well as Boost, so the tab is
+              // named for what it holds rather than for one of its libraries.
+              label="Libraries"
               size="sm"
               variant={book === "boost" ? "primary" : "ghost"}
               onClick={() => void chooseBook("boost")}

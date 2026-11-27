@@ -68,17 +68,17 @@ export function BoostReferenceManager({ iconOnly }: { iconOnly: boolean }) {
   const size = published?.bytes ? ` (${boostPackSize(published.bytes)})` : "";
   const summary = busy
     ? busy === "download"
-      ? "Downloading and verifying the Boost documentation…"
+      ? "Downloading and verifying the documentation…"
       : "Deleting…"
     : installed
-      ? `Downloaded: ${local.title ?? "Boost"} · ${local.release}${
+      ? `Downloaded: ${local.title ?? "Reference pack"} · ${local.release}${
           local.bytes ? ` · ${boostPackSize(local.bytes)}` : ""
         }`
       : published?.available
-        ? `${published.title ?? "Boost"} · ${published.release}${size}`
+        ? `${published.title ?? "Reference pack"} · ${published.release}${size}`
         : published
-          ? "No Boost documentation is published yet."
-          : "Connect to the internet to download the Boost documentation.";
+          ? "No reference documentation is published yet."
+          : "Connect to the internet to download the reference documentation.";
 
   return (
     <>
